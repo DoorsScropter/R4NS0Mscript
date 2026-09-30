@@ -5,16 +5,19 @@ local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- SOUND SETTINGS
-local JUMPSCARE_SOUND_ID = 80491955969050 -- phase 1 + 2 jumpscare / downloading sound (plays at normal pitch)
+local JUMPSCARE_SOUND_ID = 80491955969050 -- phase 1 + 2 jumpscare / downloading sound (plays fully, never cut off)
 local VICTORY_SOUND_ID = 124923188934894 -- victory pop-up sound
 local THEME_SOUND_ID = 135885597215283 -- theme song (only plays while the R4NS0M window is on screen)
-local THEME_SPEED = 0.1 -- playback speed of the theme (0.1 = very slow and deep)
+local THEME_SPEED = 0.1 -- starting speed (it is auto-corrected once the length is known)
+local THEME_TARGET_SECONDS = 90 -- the theme is stretched / squeezed to last exactly this long (1:30)
 local THEME_VOLUME = 10 -- loud
+local THEME_EXTEND_JUMPSCARE = true -- true = after the jumpscare audio ends, the FIRST HALF of the theme is cloned in to extend the music
 
 -- COIN MODEL SETTINGS
 local COIN_ASSET_ID = 130662993839681
@@ -28,6 +31,28 @@ local CD_CHANCE = 0.01 -- 1% chance per spawn (only ONE CD ever spawns per run)
 local CD_TOOL_NAME = "CD-1"
 local CD_SCALE = 0.4 -- size of the CD (on the ground AND in your hand). 1 = original size
 local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used if the model isn't already a Tool)
+
+-- CRUCIFIX SETTINGS
+local CRUCIFIX_ASSET_ID = 12699076186 -- the pickup / tool model
+local CRUCIFIX_CHANCE = 0.03 -- 3% chance per spawn cycle
+local CRUCIFIX_MAX_SPAWNS = 1 -- how many crucifixes can spawn per run (raise it if you want more)
+local CRUCIFIX_TOOL_NAME = "Crucifix"
+local CRUCIFIX_SCALE = CD_SCALE -- same size as the CD
+local CRUCIFIX_GRIP = CFrame.new(0, 0, 0) -- how it sits in your hand. If it isn't straight, try CFrame.Angles(math.rad(90), 0, 0) / (0, 0, math.rad(90)) / (math.rad(-90), 0, 0)
+local CRUCIFIX_CONSUMED = true -- true = the crucifix is used up when you use it on R4NS0M
+local CRUCIFIX_CROSS_ASSET_ID = 12526928146 -- the big cross that appears on the ground
+local CRUCIFIX_CROSS_DISTANCE = 5 -- studs in front of you
+local CRUCIFIX_CROSS_ROTATION = CFrame.Angles(0, 0, 0) -- if the big cross faces the wrong way, try (0, math.rad(90), 0) / (0, math.rad(180), 0)
+local CRUCIFIX_IMAGE_ID = 12436809176 -- image in the middle of the cross
+local CRUCIFIX_IMAGE_SIZE = 0.6 -- image size compared to the cross (1 = as big as the cross)
+local CRUCIFIX_STAY_TIME = 5 -- seconds before the cross sinks into the ground
+local CRUCIFIX_SINK_TIME = 1.5 -- how long the sinking takes
+local CRUCIFIX_LIGHT_COLOR = Color3.fromRGB(120, 200, 255) -- light blue
+local CRUCIFIX_LIGHT_BRIGHTNESS = 10
+local CRUCIFIX_LIGHT_RANGE = 40
+local CRUCIFIX_SOUND_ID_1 = 105524657454474 -- both play at the same moment when you use the crucifix
+local CRUCIFIX_SOUND_ID_2 = 115833319186798
+local CRUCIFIX_SOUND_VOLUME = 6
 
 -- TV SETTINGS
 local TV_ASSET_ID = 121471462
@@ -80,6 +105,7 @@ local POPUP_POP_TIME = 0.3 -- how long each pop-in animation takes
 -- Only one TV and one CD can ever spawn
 local tvSpawned = false
 local cdSpawned = false
+local crucifixSpawnCount = 0
 
 -- Clean up any old GUI or leftover sounds from previous executions
 if playerGui:FindFirstChild("JumpscareDownloadGui") then
@@ -109,11 +135,14 @@ end
 if SoundService:FindFirstChild("R4NS0MTheme") then
 	SoundService.R4NS0MTheme:Destroy()
 end
+if SoundService:FindFirstChild("R4NS0MThemeExtension") then
+	SoundService.R4NS0MThemeExtension:Destroy()
+end
 
 -- Cleanup old spawned map coins / CDs / TV / drawers / clones from a previous run
 for _, obj in ipairs(Workspace:GetChildren()) do
 	if obj.Name == "MapCollectibleCoin" or obj.Name == "R4NS0M_TV" or obj.Name == "R4NS0M_Drawer"
-		or obj.Name == "R4NS0M_Clone" or obj.Name == "R4NS0M_EvilClone" then
+		or obj.Name == "R4NS0M_Clone" or obj.Name == "R4NS0M_EvilClone" or obj.Name == "R4NS0M_CrucifixCross" then
 		obj:Destroy()
 	end
 end
@@ -125,6 +154,20 @@ local function clearRoundObjects()
 			obj:Destroy()
 		end
 	end
+end
+
+-- Plays a one-shot sound and cleans it up
+local function playOneShot(id, volume)
+	local s = Instance.new("Sound")
+	s.SoundId = "rbxassetid://" .. tostring(id)
+	s.Volume = volume
+	s.Parent = SoundService
+	s.Ended:Connect(function()
+		s:Destroy()
+	end)
+	Debris:AddItem(s, 60)
+	s:Play()
+	return s
 end
 
 --------------------------------------------------------------------------------
@@ -167,9 +210,10 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- LOAD CD-1 TOOL (turns whatever the asset is into a holdable Tool)
+-- LOAD TOOLS (CD-1 + Crucifix): turns whatever the asset is into a holdable Tool
 --------------------------------------------------------------------------------
 local cdToolTemplate = nil
+local crucifixToolTemplate = nil
 
 -- Scales a Tool / Model / Part (works on Tools by temporarily wrapping their contents)
 local function scaleInstance(inst, s)
@@ -194,7 +238,7 @@ local function scaleInstance(inst, s)
 	end)
 end
 
-local function buildCDTool(loaded)
+local function buildToolFromAsset(loaded, toolName, grip, scale)
 	local source = loaded:Clone()
 	
 	-- Strip scripts so the asset can't run anything
@@ -222,7 +266,7 @@ local function buildCDTool(loaded)
 			end
 		end
 		if #parts == 0 then
-			error("CD asset has no parts")
+			error(toolName .. " asset has no parts")
 		end
 		
 		-- Pick the handle: PrimaryPart if there is one, otherwise the biggest part
@@ -243,7 +287,7 @@ local function buildCDTool(loaded)
 		
 		tool = Instance.new("Tool")
 		tool.RequiresHandle = true
-		tool.Grip = CD_GRIP
+		tool.Grip = grip
 		
 		for _, p in ipairs(parts) do
 			p.Anchored = false
@@ -263,39 +307,47 @@ local function buildCDTool(loaded)
 		end
 	end
 	
-	tool.Name = CD_TOOL_NAME
-	tool.ToolTip = CD_TOOL_NAME
+	tool.Name = toolName
+	tool.ToolTip = toolName
 	tool.CanBeDropped = false
 	
-	-- Shrink it (affects both the ground version and the one in your hand)
-	scaleInstance(tool, CD_SCALE)
+	-- Resize (affects both the ground version and the one in your hand)
+	scaleInstance(tool, scale)
 	
 	return tool
 end
 
-task.spawn(function()
-	local ok, result = pcall(function()
-		return game:GetObjects("rbxassetid://" .. tostring(CD_ASSET_ID))
-	end)
-	if ok and result and result[1] then
-		local built, tool = pcall(buildCDTool, result[1])
-		if built and tool then
-			cdToolTemplate = tool
+local function loadToolTemplate(assetId, toolName, grip, scale, onDone)
+	task.spawn(function()
+		local ok, result = pcall(function()
+			return game:GetObjects("rbxassetid://" .. tostring(assetId))
+		end)
+		if ok and result and result[1] then
+			local built, tool = pcall(buildToolFromAsset, result[1], toolName, grip, scale)
+			if built and tool then
+				onDone(tool)
+			else
+				warn(toolName .. " failed to build: " .. tostring(tool))
+			end
 		else
-			warn("CD-1 failed to build: " .. tostring(tool))
+			warn(toolName .. " model failed to load.")
 		end
-	else
-		warn("CD-1 model failed to load, only coins will spawn.")
-	end
+	end)
+end
+
+loadToolTemplate(CD_ASSET_ID, CD_TOOL_NAME, CD_GRIP, CD_SCALE, function(t)
+	cdToolTemplate = t
+end)
+loadToolTemplate(CRUCIFIX_ASSET_ID, CRUCIFIX_TOOL_NAME, CRUCIFIX_GRIP, CRUCIFIX_SCALE, function(t)
+	crucifixToolTemplate = t
 end)
 
--- Makes the version of the CD that sits on the map (anchored copy of the tool's parts, already scaled)
-local function makeCDDisplay()
+-- Makes the version of a tool that sits on the map (anchored copy of the tool's parts, already scaled)
+local function makeToolDisplay(template)
 	local model = Instance.new("Model")
 	model.Name = "MapCollectibleCoin" -- same name as coins so cleanup removes it too
-	model:SetAttribute("IsCD", true)
 	
-	local clone = cdToolTemplate:Clone()
+	local clone = template:Clone()
 	for _, child in ipairs(clone:GetChildren()) do
 		child.Parent = model
 	end
@@ -314,11 +366,13 @@ end
 
 --------------------------------------------------------------------------------
 -- LOAD STATIC MODELS (TV + DRAWER): collidable, anchored, can't be collected
+-- + the big crucifix cross (no collision, just visual)
 --------------------------------------------------------------------------------
 local tvTemplate = nil
 local drawerTemplate = nil
+local crossTemplate = nil
 
-local function buildStaticModel(assetId, modelName)
+local function buildStaticModel(assetId, modelName, collide)
 	local ok, result = pcall(function()
 		return game:GetObjects("rbxassetid://" .. tostring(assetId))
 	end)
@@ -338,7 +392,11 @@ local function buildStaticModel(assetId, modelName)
 		elseif d:IsA("BasePart") then
 			hasPart = true
 			d.Anchored = true
-			d.CanCollide = true -- collision ON
+			d.CanCollide = collide
+			if not collide then
+				d.CanTouch = false
+				d.CanQuery = false
+			end
 		end
 	end
 	if not hasPart then
@@ -349,14 +407,17 @@ local function buildStaticModel(assetId, modelName)
 end
 
 task.spawn(function()
-	tvTemplate = buildStaticModel(TV_ASSET_ID, "R4NS0M_TV")
+	tvTemplate = buildStaticModel(TV_ASSET_ID, "R4NS0M_TV", true)
 end)
 task.spawn(function()
-	drawerTemplate = buildStaticModel(DRAWER_ASSET_ID, "R4NS0M_Drawer")
+	drawerTemplate = buildStaticModel(DRAWER_ASSET_ID, "R4NS0M_Drawer", true)
+end)
+task.spawn(function()
+	crossTemplate = buildStaticModel(CRUCIFIX_CROSS_ASSET_ID, "R4NS0M_CrucifixCross", false)
 end)
 
 --------------------------------------------------------------------------------
--- HELPERS: tint the TV (white flash / red glow) and kill the player
+-- HELPERS: tint a model (white flash / red glow / blue glow) and kill the player
 --------------------------------------------------------------------------------
 local function tintModel(model, color)
 	local undo = {}
@@ -1340,9 +1401,17 @@ local function startMainSequence()
 			if progress >= 1 then
 				textConn:Disconnect()
 				if screenGui then screenGui:Destroy() end
+				
+				-- The jumpscare audio is NOT cut off: it keeps playing until it ends by itself
 				if sound then
-					sound:Stop()
-					sound:Destroy()
+					if sound.IsPlaying then
+						sound.Ended:Connect(function()
+							sound:Destroy()
+						end)
+						Debris:AddItem(sound, 120)
+					else
+						sound:Destroy()
+					end
 				end
 				
 				--------------------------------------------------------------------
@@ -1355,7 +1424,7 @@ local function startMainSequence()
 				finalGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 				finalGui.Parent = playerGui
 				
-				-- THEME SONG: only plays while the R4NS0M window is on screen
+				-- THEME SONG: only plays while the R4NS0M window is on screen, fitted to 1:30
 				local themeSound = Instance.new("Sound")
 				themeSound.Name = "R4NS0MTheme"
 				themeSound.SoundId = "rbxassetid://" .. tostring(THEME_SOUND_ID)
@@ -1365,12 +1434,69 @@ local function startMainSequence()
 				themeSound.Parent = SoundService
 				themeSound:Play()
 				
+				local themeExt = nil
+				
 				local function stopTheme()
 					if themeSound then
 						themeSound:Stop()
 						themeSound:Destroy()
 						themeSound = nil
 					end
+					if themeExt then
+						themeExt:Stop()
+						themeExt:Destroy()
+						themeExt = nil
+					end
+				end
+				
+				-- Fit the theme to THEME_TARGET_SECONDS (90s = 1:30) once its length is known
+				task.spawn(function()
+					local ref = themeSound
+					local t0 = os.clock()
+					while ref and ref.Parent and ref.TimeLength == 0 and os.clock() - t0 < 5 do
+						task.wait(0.1)
+					end
+					if ref and ref.Parent and ref.TimeLength > 0 then
+						ref.PlaybackSpeed = ref.TimeLength / THEME_TARGET_SECONDS
+						ref.Looped = false
+					end
+				end)
+				
+				-- EXTENSION: after the jumpscare audio ends, a clone of the FIRST HALF of the theme plays
+				if THEME_EXTEND_JUMPSCARE then
+					task.spawn(function()
+						local w0 = os.clock()
+						while sound and sound.Parent and sound.IsPlaying and os.clock() - w0 < 10 do
+							task.wait(0.1)
+						end
+						if not themeSound then return end -- the R4NS0M window is already gone
+						
+						local ext = Instance.new("Sound")
+						ext.Name = "R4NS0MThemeExtension"
+						ext.SoundId = "rbxassetid://" .. tostring(THEME_SOUND_ID)
+						ext.Volume = THEME_VOLUME
+						ext.PlaybackSpeed = 1
+						ext.Looped = false
+						ext.Parent = SoundService
+						themeExt = ext
+						ext:Play()
+						
+						local l0 = os.clock()
+						while ext.Parent and ext.TimeLength == 0 and os.clock() - l0 < 5 do
+							task.wait(0.1)
+						end
+						local half = ext.TimeLength / 2
+						while ext.Parent and half > 0 and ext.TimePosition < half do
+							task.wait(0.1)
+						end
+						if ext.Parent then
+							ext:Stop()
+							ext:Destroy()
+						end
+						if themeExt == ext then
+							themeExt = nil
+						end
+					end)
 				end
 				
 				local backgroundPopups = {}
@@ -1832,6 +1958,163 @@ local function startMainSequence()
 				end)
 				
 				----------------------------------------------------------------
+				-- CRUCIFIX: the round is "crucified" (R4NS0M disappears completely)
+				----------------------------------------------------------------
+				local crucifyBusy = false
+				
+				local function isRoundActive()
+					return finalGui ~= nil and finalGui.Parent ~= nil and not hasWon and not hasFailed
+				end
+				
+				-- Everything of R4NS0M vanishes: window, pop-ups, theme, coins, drawers. No victory, no failure.
+				local function crucifyRound()
+					hasWon = true -- stops the timer, the coin spawner and the pop-up spawner
+					if finalConn then finalConn:Disconnect() end
+					stopTheme()
+					clearRoundObjects()
+					
+					local info = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+					mainWindow.ClipsDescendants = true
+					TweenService:Create(mainWindow, info, {
+						Size = UDim2.new(0, 0, 0, 0),
+						BackgroundTransparency = 1
+					}):Play()
+					for _, popData in ipairs(backgroundPopups) do
+						if popData.Object and popData.Object.Parent then
+							TweenService:Create(popData.Object, info, {
+								Size = UDim2.new(0, 0, 0, 0),
+								BackgroundTransparency = 1
+							}):Play()
+						end
+					end
+					task.delay(0.6, function()
+						if finalGui then
+							finalGui:Destroy()
+						end
+					end)
+				end
+				
+				-- The big light blue cross: appears in front of you, image shakes, sinks into the ground after a few seconds
+				local function spawnCrucifixCross()
+					if not crossTemplate then return end
+					local char = player.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					if not hrp then return end
+					
+					local flat = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+					if flat.Magnitude < 0.1 then
+						flat = Vector3.new(0, 0, -1)
+					end
+					flat = flat.Unit
+					
+					local target = hrp.Position + flat * CRUCIFIX_CROSS_DISTANCE
+					local rp = RaycastParams.new()
+					rp.FilterType = Enum.RaycastFilterType.Exclude
+					rp.IgnoreWater = true
+					rp.FilterDescendantsInstances = {char}
+					local hit = Workspace:Raycast(target + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), rp)
+					local groundPos = hit and hit.Position or Vector3.new(target.X, hrp.Position.Y - 3, target.Z)
+					
+					local cross = crossTemplate:Clone()
+					cross.Name = "R4NS0M_CrucifixCross"
+					cross:PivotTo(CFrame.lookAt(groundPos, groundPos - flat) * CRUCIFIX_CROSS_ROTATION)
+					
+					local cf, size = cross:GetBoundingBox()
+					cross:PivotTo(cross:GetPivot() + Vector3.new(0, groundPos.Y - (cf.Position.Y - size.Y / 2), 0))
+					cf, size = cross:GetBoundingBox()
+					
+					-- light blue + bright glow
+					tintModel(cross, CRUCIFIX_LIGHT_COLOR)
+					
+					-- invisible part in the middle of the cross that holds the light + the image
+					local center = Instance.new("Part")
+					center.Name = "CrossCenter"
+					center.Size = Vector3.new(0.3, 0.3, 0.3)
+					center.Transparency = 1
+					center.Anchored = true
+					center.CanCollide = false
+					center.CanTouch = false
+					center.CanQuery = false
+					center.CFrame = cf
+					center.Parent = cross
+					
+					local light = Instance.new("PointLight")
+					light.Color = CRUCIFIX_LIGHT_COLOR
+					light.Brightness = CRUCIFIX_LIGHT_BRIGHTNESS
+					light.Range = CRUCIFIX_LIGHT_RANGE
+					light.Shadows = false
+					light.Parent = center
+					
+					local s = math.max(size.X, size.Y) * CRUCIFIX_IMAGE_SIZE
+					local gui = Instance.new("BillboardGui")
+					gui.Name = "CrossImage"
+					gui.Adornee = center
+					gui.AlwaysOnTop = true
+					gui.LightInfluence = 0
+					gui.Size = UDim2.new(s, 0, s, 0)
+					gui.Parent = center
+					
+					local img = Instance.new("ImageLabel")
+					img.BackgroundTransparency = 1
+					img.AnchorPoint = Vector2.new(0.5, 0.5)
+					img.Position = UDim2.new(0.5, 0, 0.5, 0)
+					img.Size = UDim2.new(1, 0, 1, 0)
+					img.Image = "rbxthumb://type=Asset&id=" .. tostring(CRUCIFIX_IMAGE_ID) .. "&w=420&h=420"
+					img.Parent = gui
+					
+					cross.Parent = Workspace
+					
+					task.spawn(function()
+						-- 1) the image shakes a lot, like it's crying for help
+						local t0 = os.clock()
+						while os.clock() - t0 < CRUCIFIX_STAY_TIME and cross.Parent do
+							img.Position = UDim2.new(0.5 + (math.random() - 0.5) * 0.4, 0, 0.5 + (math.random() - 0.5) * 0.4, 0)
+							img.Rotation = (math.random() - 0.5) * 24
+							RunService.Heartbeat:Wait()
+						end
+						
+						-- 2) cross + image go through the ground
+						if cross.Parent then
+							img.Position = UDim2.new(0.5, 0, 0.5, 0)
+							local base = cross:GetPivot()
+							local depth = size.Y + 1
+							local s0 = os.clock()
+							while cross.Parent do
+								local a = math.clamp((os.clock() - s0) / CRUCIFIX_SINK_TIME, 0, 1)
+								local off = Vector3.new(0, -depth * a, 0)
+								cross:PivotTo(base + off)
+								center.CFrame = cf + off
+								img.Position = UDim2.new(0.5 + (math.random() - 0.5) * 0.2, 0, 0.5 + (math.random() - 0.5) * 0.2, 0)
+								img.ImageTransparency = a
+								light.Brightness = CRUCIFIX_LIGHT_BRIGHTNESS * (1 - a)
+								if a >= 1 then break end
+								RunService.Heartbeat:Wait()
+							end
+						end
+						if cross.Parent then
+							cross:Destroy()
+						end
+					end)
+				end
+				
+				-- Using the held crucifix while R4NS0M is active
+				local function onCrucifixActivated(tool)
+					if crucifyBusy or not isRoundActive() then return end
+					crucifyBusy = true
+					
+					-- both sounds at the same moment
+					playOneShot(CRUCIFIX_SOUND_ID_1, CRUCIFIX_SOUND_VOLUME)
+					playOneShot(CRUCIFIX_SOUND_ID_2, CRUCIFIX_SOUND_VOLUME)
+					
+					spawnCrucifixCross()
+					crucifyRound()
+					
+					if CRUCIFIX_CONSUMED and tool then
+						tool:Destroy()
+					end
+				end
+				
+				----------------------------------------------------------------
 				-- COIN REWARD (shared by coin pickups and the drawer):
 				-- coin bits fly to the R4NS0M window + the counter drops
 				----------------------------------------------------------------
@@ -1978,13 +2261,18 @@ local function startMainSequence()
 					obj:PivotTo(obj:GetPivot() + Vector3.new(0, groundPos.Y - bottomY + COIN_HOVER, 0))
 				end
 				
-				-- Gives the player a fresh copy of the CD-1 tool
-				local function giveCDTool()
-					if not cdToolTemplate then return end
+				-- Gives the player a fresh copy of a tool (CD-1 or Crucifix)
+				local function giveTool(template, isCrucifix)
+					if not template then return end
 					local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 3)
 					if backpack then
-						local tool = cdToolTemplate:Clone()
+						local tool = template:Clone()
 						tool.Parent = backpack
+						if isCrucifix then
+							tool.Activated:Connect(function()
+								onCrucifixActivated(tool)
+							end)
+						end
 					end
 				end
 				
@@ -2081,7 +2369,7 @@ local function startMainSequence()
 					return true
 				end
 				
-				-- COIN / CD / TV / DRAWER SPAWNER
+				-- COIN / CD / CRUCIFIX / TV / DRAWER SPAWNER
 				local function spawnDoorsCompatibleCoin()
 					task.spawn(function()
 						local character = player.Character or player.CharacterAdded:Wait()
@@ -2105,17 +2393,25 @@ local function startMainSequence()
 							end
 						end
 						
-						-- CD roll (only ONE CD ever spawns)
-						local isCD = false
-						if not cdSpawned and cdToolTemplate ~= nil and math.random() < CD_CHANCE then
+						-- What is this spawn? "coin", "cd" or "crucifix"
+						local kind = "coin"
+						if crucifixSpawnCount < CRUCIFIX_MAX_SPAWNS and crucifixToolTemplate ~= nil and math.random() < CRUCIFIX_CHANCE then
+							crucifixSpawnCount += 1
+							kind = "crucifix"
+							print("[R4NS0M] A crucifix spawned at " .. tostring(groundPos))
+						elseif not cdSpawned and cdToolTemplate ~= nil and math.random() < CD_CHANCE then
 							cdSpawned = true
-							isCD = true
+							kind = "cd"
 							print("[R4NS0M] A CD-1 spawned at " .. tostring(groundPos))
 						end
 						
 						local coinObj
-						if isCD then
-							coinObj = makeCDDisplay()
+						if kind == "crucifix" then
+							coinObj = makeToolDisplay(crucifixToolTemplate)
+							placeModelOnGround(coinObj, groundPos)
+							coinObj.Parent = Workspace
+						elseif kind == "cd" then
+							coinObj = makeToolDisplay(cdToolTemplate)
 							placeModelOnGround(coinObj, groundPos)
 							coinObj.Parent = Workspace
 						elseif coinTemplate then
@@ -2171,9 +2467,12 @@ local function startMainSequence()
 									
 									playCollectSound()
 									
-									-- CD PICKUP: goes to your inventory, doesn't change the coin counter
-									if isCD then
-										giveCDTool()
+									-- TOOL PICKUPS: go to your inventory, don't change the coin counter
+									if kind == "cd" then
+										giveTool(cdToolTemplate, false)
+										return
+									elseif kind == "crucifix" then
+										giveTool(crucifixToolTemplate, true)
 										return
 									end
 									
