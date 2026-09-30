@@ -10,7 +10,7 @@ local player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPla
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- SOUND SETTINGS
-local JUMPSCARE_SOUND_ID = 80491955969050 -- phase 1 + 2 jumpscare / downloading sound
+local JUMPSCARE_SOUND_ID = 80491955969050 -- phase 1 + 2 jumpscare / downloading sound (plays at normal pitch)
 local VICTORY_SOUND_ID = 124923188934894 -- victory pop-up sound
 local THEME_SOUND_ID = 135885597215283 -- theme song (only plays while the R4NS0M window is on screen)
 local THEME_SPEED = 0.1 -- playback speed of the theme (0.1 = very slow and deep)
@@ -63,6 +63,8 @@ local CLONE_KILL_DISTANCE = 3.2 -- how close it has to get to kill you
 local EVIL_IMAGE_ID = 105690422013136
 local REWIND_MAX_TIME = 2.5 -- the normal clone's rewind never takes longer than this (seconds)
 local REWIND_MIN_RATE = 120 -- minimum rewind speed (recorded frames per second)
+local NORMAL_CLONE_LIGHT_BRIGHTNESS = 3 -- how strongly the white clone glows (0 = no light, only neon)
+local NORMAL_CLONE_LIGHT_RANGE = 16
 
 -- DRAWER SETTINGS
 local DRAWER_ASSET_ID = 11213956867
@@ -413,9 +415,10 @@ local function killPlayer(hum)
 end
 
 --------------------------------------------------------------------------------
--- AVATAR CLONE (normal = copy of you, evil = red version with the image)
+-- AVATAR CLONE (normal = glowing neon white copy of you, evil = red version with the image)
 --------------------------------------------------------------------------------
 local RED = Color3.fromRGB(255, 0, 0)
+local WHITE = Color3.fromRGB(255, 255, 255)
 
 local function makeAvatarClone(evil)
 	local char = player.Character
@@ -435,15 +438,15 @@ local function makeAvatarClone(evil)
 		end
 	end
 	
-	-- Evil version: strip clothes / face so it can be pure red
-	if evil then
-		for _, d in ipairs(clone:GetDescendants()) do
-			if d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") or d:IsA("BodyColors")
-				or d:IsA("Decal") or d:IsA("Texture") or d:IsA("SurfaceAppearance") then
-				d:Destroy()
-			end
+	-- Both versions: strip clothes / face so the clone can be one solid neon color
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") or d:IsA("BodyColors")
+			or d:IsA("Decal") or d:IsA("Texture") or d:IsA("SurfaceAppearance") then
+			d:Destroy()
 		end
 	end
+	
+	local tintColor = evil and RED or WHITE
 	
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("BasePart") then
@@ -452,16 +455,14 @@ local function makeAvatarClone(evil)
 			d.CanTouch = false
 			d.CanQuery = false
 			d.Massless = true
-			if evil then
-				d.Color = RED
-				d.Material = Enum.Material.Neon
-				if d:IsA("MeshPart") then
-					pcall(function()
-						d.TextureID = ""
-					end)
-				end
+			d.Color = tintColor
+			d.Material = Enum.Material.Neon
+			if d:IsA("MeshPart") then
+				pcall(function()
+					d.TextureID = ""
+				end)
 			end
-		elseif d:IsA("SpecialMesh") and evil then
+		elseif d:IsA("SpecialMesh") then
 			pcall(function()
 				d.TextureId = ""
 			end)
@@ -492,15 +493,19 @@ local function makeAvatarClone(evil)
 		end)
 	end
 	
-	if evil then
-		local torso = clone:FindFirstChild("UpperTorso") or clone:FindFirstChild("Torso")
-		if torso then
-			local light = Instance.new("PointLight")
+	local torso = clone:FindFirstChild("UpperTorso") or clone:FindFirstChild("Torso")
+	if torso then
+		local light = Instance.new("PointLight")
+		if evil then
 			light.Color = RED
 			light.Range = 14
 			light.Brightness = 2
-			light.Parent = torso
+		else
+			light.Color = WHITE
+			light.Range = NORMAL_CLONE_LIGHT_RANGE
+			light.Brightness = NORMAL_CLONE_LIGHT_BRIGHTNESS
 		end
+		light.Parent = torso
 	end
 	
 	return clone
@@ -1193,7 +1198,7 @@ local function startMainSequence()
 	sound.Name = "JumpscareSound"
 	sound.SoundId = "rbxassetid://" .. tostring(JUMPSCARE_SOUND_ID)
 	sound.Volume = 10
-	sound.PlaybackSpeed = 1.0
+	sound.PlaybackSpeed = 1.0 -- stays at normal pitch the whole time
 	sound.Parent = SoundService
 	sound:Play()
 
@@ -1230,10 +1235,6 @@ local function startMainSequence()
 	local connection
 	connection = RunService.RenderStepped:Connect(function(dt)
 		elapsed += dt
-		
-		if sound and sound.IsPlaying then
-			sound.PlaybackSpeed = 1.0 + (elapsed * 0.25)
-		end
 		
 		if math.random(1, 3) == 1 then
 			phase1Bg.BackgroundColor3 = Color3.fromRGB(math.random(150, 255), 0, 0)
@@ -1319,10 +1320,6 @@ local function startMainSequence()
 		
 		textConn = RunService.RenderStepped:Connect(function(dt)
 			phase2Elapsed += dt
-			
-			if sound and sound.IsPlaying then
-				sound.PlaybackSpeed = 1.0 + ((phase1Duration + phase2Elapsed) * 0.22)
-			end
 			
 			if math.random(1, 3) == 1 then
 				bgFrame.BackgroundColor3 = Color3.fromRGB(math.random(150, 255), 0, 0)
