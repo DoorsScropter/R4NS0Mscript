@@ -37,7 +37,7 @@ local CRUCIFIX_ASSET_ID = 11650774915 -- the pickup / tool model
 local CRUCIFIX_CHANCE = 0.03 -- 3% chance per spawn cycle
 local CRUCIFIX_MAX_SPAWNS = 1 -- how many crucifixes can spawn per run (raise it if you want more)
 local CRUCIFIX_TOOL_NAME = "Crucifix"
-local CRUCIFIX_SCALE = CD_SCALE -- same size as the CD
+local CRUCIFIX_SCALE = 1 -- same size as the CD
 local CRUCIFIX_GRIP = CFrame.new(0, 0, 0) -- how it sits in your hand. If it isn't straight, try CFrame.Angles(math.rad(90), 0, 0) / (0, 0, math.rad(90)) / (math.rad(-90), 0, 0)
 local CRUCIFIX_CONSUMED = true -- true = the crucifix is used up when you use it on R4NS0M
 local CRUCIFIX_CROSS_ASSET_ID = 12570023741 -- the big cross that appears on the ground
