@@ -24,6 +24,7 @@ local COIN_ASSET_ID = 130662993839681
 local COIN_SCALE = 1 -- make bigger/smaller (example: 1.5 or 0.7)
 local COIN_ROTATION = CFrame.Angles(0, 0, 0) -- if the coin lies wrong, try CFrame.Angles(math.rad(90), 0, 0) or CFrame.Angles(0, 0, math.rad(90))
 local COIN_HOVER = 0.15 -- how far the coin floats above the ground
+local PICKUP_DISTANCE = 10 -- how close you must be to see the "Collect Coins" / "Pick Up" option
 
 -- CD-1 TOOL SETTINGS
 local CD_ASSET_ID = 116084743176043
@@ -34,10 +35,10 @@ local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used i
 
 -- CRUCIFIX SETTINGS
 local CRUCIFIX_ASSET_ID = 11650774915 -- the pickup / tool model
-local CRUCIFIX_CHANCE = 0.05 -- 3% chance per spawn cycle
+local CRUCIFIX_CHANCE = 0.05 -- 5% chance per spawn cycle
 local CRUCIFIX_MAX_SPAWNS = 1 -- how many crucifixes can spawn per run (raise it if you want more)
 local CRUCIFIX_TOOL_NAME = "Crucifix"
-local CRUCIFIX_SCALE = 1 -- same size as the CD
+local CRUCIFIX_SCALE = 1
 local CRUCIFIX_GRIP = CFrame.new(0, 0, 0) -- how it sits in your hand. If it isn't straight, try CFrame.Angles(math.rad(90), 0, 0) / (0, 0, math.rad(90)) / (math.rad(-90), 0, 0)
 local CRUCIFIX_CONSUMED = true -- true = the crucifix is used up when you use it on R4NS0M
 local CRUCIFIX_CROSS_ASSET_ID = 12570023741 -- the big cross that appears on the ground
@@ -55,26 +56,37 @@ local CRUCIFIX_SOUND_ID_2 = 115833319186798
 local CRUCIFIX_SOUND_VOLUME = 6
 
 -- TV SETTINGS
-local TV_ASSET_ID = 121471462
+local TV_ASSET_ID = 112955347560864 -- new TV model
 local TV_CHANCE = 0.01 -- 1% chance per spawn (only ONE TV ever spawns per run)
 local TV_ROTATION = CFrame.Angles(0, 0, 0) -- if the TV faces the wrong way, try CFrame.Angles(0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
 local TV_STATIC_SOUND_ID = 138347177735590
 local TV_IDLE_STATIC_VOLUME = 0.6 -- quiet static while the TV just stands there (0 = silent)
 local TV_ACTIVE_STATIC_VOLUME = 3 -- static volume while opening / shaking
-local TV_OPEN_DELAY = 0.8 -- seconds the TV stays white before the clone starts coming out
-local TV_SHAKE_TIME = 7 -- how long the TV shakes when you insert the disc
-local TV_DISC_SOUND_ID = 124085357123084 -- audio that plays after the shake, right before the evil clone spawns
-local TV_DISC_SOUND_VOLUME = 5
-local TV_DISC_SOUND_MAX_WAIT = 4 -- the evil clone never waits longer than this for the audio (seconds)
 local TV_STAY_WHITE = false -- false = TV goes back to normal after the clone is out, true = stays white
 local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
+
+-- "OPEN TV?" SETTINGS
+local TV_OPEN_DELAY = 5 -- seconds the TV screen glows white (with static) before the clone appears
+local TV_OPEN_LIGHT_COLOR = Color3.fromRGB(255, 255, 255)
+local TV_OPEN_LIGHT_BRIGHTNESS = 8
+local TV_OPEN_LIGHT_RANGE = 35
+
+-- "INSERT DISC?" SETTINGS
+local TV_INSERT_SOUND_1 = 78535264432518 -- plays for 1 second
+local TV_INSERT_SOUND_1_TIME = 1
+local TV_INSERT_SOUND_2 = 926658585 -- plays for 7 seconds straight (the TV shakes during this)
+local TV_SHAKE_TIME = 7
+local TV_INSERT_SOUND_3 = 84909470598244 -- plays after that, the image shows and shakes during it
+local TV_INSERT_SOUND_3_MAX_WAIT = 15 -- never waits longer than this for sound 3 to end
+local TV_INSERT_SOUND_VOLUME = 5
+local TV_EVIL_DELAY = 3 -- seconds after sound 3 ends before the evil clone comes out
 
 -- TV DISC GLOW / PARTICLES / IMAGE SETTINGS
 local TV_GLOW_COLOR = Color3.fromRGB(255, 110, 110) -- light red glow
 local TV_GLOW_LIGHT_COLOR = Color3.fromRGB(255, 60, 60)
 local TV_GLOW_BRIGHTNESS = 10 -- how bright the red light around the TV is
 local TV_GLOW_RANGE = 40
-local TV_CENTER_IMAGE_ID = 12436809176 -- image in the center of the TV (appears when the audio starts)
+local TV_CENTER_IMAGE_ID = 12436809176 -- image in the center of the TV (shakes like the TV is corrupted)
 local TV_CENTER_IMAGE_SIZE = 0.8 -- image size compared to the TV (1 = as big as the TV)
 local TV_GLOW_STAY_AFTER = false -- false = glow / particles / image go away when the evil clone spawns, true = they stay
 
@@ -98,9 +110,16 @@ local DRAWER_COIN_CHANCE = 0.5 -- chance that looting a drawer gives you a coin 
 local DRAWER_ROTATION = CFrame.Angles(0, 0, 0) -- if the drawer faces the wrong way, try (0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
 local DRAWER_PERSIST = false -- false = drawers are removed when R4NS0M ends, true = they stay forever like the TV
 
--- POP-UP SPAWN SETTINGS
+-- POP-UP SETTINGS
+local POPUP_COUNT = 12 -- how many pop-ups spawn
 local POPUP_DELAY = 0.1 -- seconds between each pop-up appearing
 local POPUP_POP_TIME = 0.3 -- how long each pop-in animation takes
+local POPUP_LIFETIME_MIN = 11 -- each pop-up lives a random whole number of seconds from MIN to MAX
+local POPUP_LIFETIME_MAX = 15
+local POPUP_FLICKER_CHANCE = 0.10 -- chance (rolled every POPUP_FLICKER_CHECK seconds, per window) that a window flickers
+local POPUP_FLICKER_CHECK = 1
+local POPUP_FLICKER_TIME = 0.1 -- how long the red flicker lasts
+local POPUP_FLICKER_IMAGE_ID = 12436809176 -- image shown on the red flicker (only inside that window)
 
 -- Only one TV and one CD can ever spawn
 local tvSpawned = false
@@ -168,6 +187,78 @@ local function playOneShot(id, volume)
 	Debris:AddItem(s, 60)
 	s:Play()
 	return s
+end
+
+-- Creates a sound (not playing yet)
+local function makeSound(id, volume)
+	local s = Instance.new("Sound")
+	s.Name = "TVDiscSound"
+	s.SoundId = "rbxassetid://" .. tostring(id)
+	s.Volume = volume
+	s.Parent = SoundService
+	return s
+end
+
+-- Plays a sound for exactly `seconds` (cut off if longer), then removes it
+local function playTimed(id, volume, seconds)
+	local s = makeSound(id, volume)
+	s:Play()
+	task.wait(seconds)
+	s:Stop()
+	s:Destroy()
+end
+
+-- Plays a sound until it ends (never longer than maxWait), then removes it
+local function playUntilEnd(id, volume, maxWait)
+	local s = makeSound(id, volume)
+	local ended = false
+	s.Ended:Connect(function()
+		ended = true
+	end)
+	s:Play()
+	local t0 = os.clock()
+	while not ended and os.clock() - t0 < maxWait do
+		-- if the audio never loaded, don't keep waiting
+		if os.clock() - t0 > 1 and s.TimeLength == 0 then
+			break
+		end
+		RunService.Heartbeat:Wait()
+	end
+	s:Destroy()
+end
+
+-- Biggest BasePart of a model / part (holds prompts)
+local function getMainPart(obj)
+	if obj:IsA("BasePart") then
+		return obj
+	end
+	local main, bestVol = nil, -1
+	for _, d in ipairs(obj:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local v = d.Size.X * d.Size.Y * d.Size.Z
+			if v > bestVol then
+				bestVol = v
+				main = d
+			end
+		end
+	end
+	return main
+end
+
+-- Adds a tap prompt ("Collect Coins", "Pick Up CD-1", ...) to an object
+local function addPickupPrompt(obj, actionText)
+	local main = getMainPart(obj)
+	if not main then return nil end
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "PickupPrompt"
+	prompt.ObjectText = ""
+	prompt.ActionText = actionText
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = PICKUP_DISTANCE
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.Parent = main
+	return prompt
 end
 
 --------------------------------------------------------------------------------
@@ -417,11 +508,13 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- HELPERS: tint a model (white flash / red glow / blue glow) and kill the player
+-- HELPERS: tint a model or part (white / red / blue glow), find the TV screen, kill the player
 --------------------------------------------------------------------------------
 local function tintModel(model, color)
 	local undo = {}
-	for _, d in ipairs(model:GetDescendants()) do
+	local list = model:GetDescendants()
+	table.insert(list, model) -- also works on a single part
+	for _, d in ipairs(list) do
 		if d:IsA("BasePart") then
 			local oc, om = d.Color, d.Material
 			table.insert(undo, function()
@@ -464,6 +557,24 @@ local function tintModel(model, color)
 			pcall(f)
 		end
 	end
+end
+
+-- Looks for the TV's screen by part name (screen / display / glass / monitor). Returns nil if there isn't one.
+local function findScreenPart(tv)
+	local best, bestVol = nil, -1
+	for _, d in ipairs(tv:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local n = string.lower(d.Name)
+			if string.find(n, "screen") or string.find(n, "display") or string.find(n, "glass") or string.find(n, "monitor") then
+				local v = d.Size.X * d.Size.Y * d.Size.Z
+				if v > bestVol then
+					bestVol = v
+					best = d
+				end
+			end
+		end
+	end
+	return best
 end
 
 local function killPlayer(hum)
@@ -870,20 +981,13 @@ end
 --------------------------------------------------------------------------------
 local function setupTV(tv, groundY)
 	-- Biggest part holds the prompt and the sound
-	local main, bestVol = nil, -1
-	for _, d in ipairs(tv:GetDescendants()) do
-		if d:IsA("BasePart") then
-			local v = d.Size.X * d.Size.Y * d.Size.Z
-			if v > bestVol then
-				bestVol = v
-				main = d
-			end
-		end
-	end
+	local main = getMainPart(tv)
 	if not main then
 		tv:Destroy()
 		return
 	end
+	
+	local screenPart = findScreenPart(tv)
 	
 	-- Static sound
 	local staticSound = Instance.new("Sound")
@@ -967,8 +1071,8 @@ local function setupTV(tv, groundY)
 	end
 	
 	----------------------------------------------------------------
-	-- RED GLOW + PARTICLES (start when the TV starts shaking)
-	-- + CENTER IMAGE (appears when the audio starts)
+	-- RED GLOW + PARTICLES (start when you insert the disc)
+	-- + CENTER IMAGE (appears with sound 3, shakes like the TV is corrupted)
 	----------------------------------------------------------------
 	local glowRestore = nil
 	local glowCenter = nil
@@ -979,7 +1083,7 @@ local function setupTV(tv, groundY)
 	
 	local function startGlow()
 		if glowCenter then return end
-		doRestoreTV() -- drop the white tint if it's still on
+		doRestoreTV() -- drop the white glow if it's still on
 		glowRestore = tintModel(tv, TV_GLOW_COLOR)
 		
 		local cf, size = tv:GetBoundingBox()
@@ -1032,13 +1136,14 @@ local function setupTV(tv, groundY)
 		if not glowCenter or glowBillboard then return end
 		local s = math.max(glowSize.X, glowSize.Y) * TV_CENTER_IMAGE_SIZE
 		
-		glowBillboard = Instance.new("BillboardGui")
-		glowBillboard.Name = "TVCenterImage"
-		glowBillboard.Adornee = glowCenter
-		glowBillboard.AlwaysOnTop = true
-		glowBillboard.LightInfluence = 0
-		glowBillboard.Size = UDim2.new(s, 0, s, 0)
-		glowBillboard.Parent = glowCenter
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "TVCenterImage"
+		gui.Adornee = glowCenter
+		gui.AlwaysOnTop = true
+		gui.LightInfluence = 0
+		gui.Size = UDim2.new(s, 0, s, 0)
+		gui.Parent = glowCenter
+		glowBillboard = gui
 		
 		local img = Instance.new("ImageLabel")
 		img.BackgroundTransparency = 1
@@ -1046,7 +1151,17 @@ local function setupTV(tv, groundY)
 		img.Position = UDim2.new(0.5, 0, 0.5, 0)
 		img.Size = UDim2.new(1, 0, 1, 0)
 		img.Image = "rbxthumb://type=Asset&id=" .. tostring(TV_CENTER_IMAGE_ID) .. "&w=420&h=420"
-		img.Parent = glowBillboard
+		img.Parent = gui
+		
+		-- the image shakes / glitches like the TV is getting corrupted (stops when the glow is removed)
+		task.spawn(function()
+			while glowBillboard == gui and gui.Parent do
+				img.Position = UDim2.new(0.5 + (math.random() - 0.5) * 0.3, 0, 0.5 + (math.random() - 0.5) * 0.3, 0)
+				img.Rotation = (math.random() - 0.5) * 16
+				img.ImageTransparency = (math.random() < 0.15) and (0.3 + math.random() * 0.4) or 0
+				RunService.Heartbeat:Wait()
+			end
+		end)
 	end
 	
 	local function stopGlow()
@@ -1064,33 +1179,9 @@ local function setupTV(tv, groundY)
 		glowCenter, glowEmitter, glowLight, glowBillboard = nil, nil, nil, nil
 	end
 	
-	-- Plays the disc audio and waits for it to finish (never longer than TV_DISC_SOUND_MAX_WAIT)
-	local function playDiscAudio()
-		local discSound = Instance.new("Sound")
-		discSound.Name = "TVDiscSound"
-		discSound.SoundId = "rbxassetid://" .. tostring(TV_DISC_SOUND_ID)
-		discSound.Volume = TV_DISC_SOUND_VOLUME
-		discSound.Parent = SoundService
-		
-		local ended = false
-		discSound.Ended:Connect(function()
-			ended = true
-		end)
-		discSound:Play()
-		
-		local t0 = os.clock()
-		while not ended and os.clock() - t0 < TV_DISC_SOUND_MAX_WAIT do
-			-- if the audio never loaded, don't keep waiting
-			if os.clock() - t0 > 1 and discSound.TimeLength == 0 then
-				break
-			end
-			RunService.Heartbeat:Wait()
-		end
-		discSound:Destroy()
-	end
-	
-	-- INSERT DISC: TV shakes 7s + glows red with particles (normal clone rewinds into the TV if it's out),
-	-- then the audio plays with the image in the center, then the EVIL clone comes out
+	-- INSERT DISC:
+	--   sound 1 plays 1s -> sound 2 plays 7s while the TV shakes (normal clone rewinds into the TV if it's out)
+	--   -> sound 3 plays with the shaking image -> 3s after it ends the EVIL clone comes out (TV standing still)
 	local function insertDisc(cdTool, ctl)
 		phase = "busy"
 		if CD_CONSUMED then
@@ -1112,7 +1203,12 @@ local function setupTV(tv, groundY)
 				end
 			end
 			
-			-- Shake
+			-- 1) first sound, 1 second
+			playTimed(TV_INSERT_SOUND_1, TV_INSERT_SOUND_VOLUME, TV_INSERT_SOUND_1_TIME)
+			
+			-- 2) second sound, 7 seconds straight, the TV shakes the whole time
+			local soundTwo = makeSound(TV_INSERT_SOUND_2, TV_INSERT_SOUND_VOLUME)
+			soundTwo:Play()
 			local base = tv:GetPivot()
 			local t0 = os.clock()
 			while os.clock() - t0 < TV_SHAKE_TIME and tv.Parent do
@@ -1122,6 +1218,8 @@ local function setupTV(tv, groundY)
 				tv:PivotTo(base * CFrame.new(ox, 0, oz) * CFrame.Angles(0, 0, rz))
 				RunService.Heartbeat:Wait()
 			end
+			soundTwo:Stop()
+			soundTwo:Destroy()
 			if tv.Parent then
 				tv:PivotTo(base)
 			end
@@ -1132,17 +1230,23 @@ local function setupTV(tv, groundY)
 				RunService.Heartbeat:Wait()
 			end
 			
-			-- Shake is over: static cuts out, the image shows in the center, the audio plays
+			-- 3) third sound, the image shows in the center and shakes
 			setStatic(0)
 			showCenterImage()
-			playDiscAudio()
+			playUntilEnd(TV_INSERT_SOUND_3, TV_INSERT_SOUND_VOLUME, TV_INSERT_SOUND_3_MAX_WAIT)
 			
 			if not tv.Parent then
 				cycleDone()
 				return
 			end
 			
-			-- Audio finished: the evil clone comes out (glow + particles + image go away unless TV_GLOW_STAY_AFTER)
+			-- 4) 3 seconds after the sound ends, the evil clone comes out
+			task.wait(TV_EVIL_DELAY)
+			if not tv.Parent then
+				cycleDone()
+				return
+			end
+			
 			if not TV_GLOW_STAY_AFTER then
 				stopGlow()
 			end
@@ -1155,13 +1259,42 @@ local function setupTV(tv, groundY)
 		end)
 	end
 	
-	-- OPEN TV: TV turns white, a clone of you comes out
+	-- OPEN TV: the screen turns on (white glow + white light + static) for 5 seconds, then a clone of you comes out
 	local function openTV()
 		phase = "busy"
 		task.spawn(function()
-			restoreTV = tintModel(tv, Color3.fromRGB(255, 255, 255))
+			local target = screenPart or tv -- if no screen part is found, the whole TV lights up
+			local tintUndo = tintModel(target, TV_OPEN_LIGHT_COLOR)
+			local openLight = Instance.new("PointLight")
+			openLight.Color = TV_OPEN_LIGHT_COLOR
+			openLight.Brightness = TV_OPEN_LIGHT_BRIGHTNESS
+			openLight.Range = TV_OPEN_LIGHT_RANGE
+			openLight.Shadows = false
+			openLight.Parent = screenPart or main
+			
+			restoreTV = function()
+				openLight:Destroy()
+				tintUndo()
+			end
+			
 			setStatic(TV_ACTIVE_STATIC_VOLUME)
-			task.wait(TV_OPEN_DELAY)
+			
+			-- power-on flicker
+			local flickerTime = 0
+			for i = 1, 6 do
+				if not tv.Parent then break end
+				openLight.Brightness = (i % 2 == 0) and TV_OPEN_LIGHT_BRIGHTNESS or 0
+				task.wait(0.08)
+				flickerTime += 0.08
+			end
+			openLight.Brightness = TV_OPEN_LIGHT_BRIGHTNESS
+			
+			task.wait(math.max(0, TV_OPEN_DELAY - flickerTime))
+			
+			if not tv.Parent then
+				cycleDone()
+				return
+			end
 			
 			normalCtl = runCloneEntity(false, tv, groundY, function()
 				phase = "normal"
@@ -1509,7 +1642,10 @@ local function startMainSequence()
 					"17665445431",
 					"17297286789",
 					"15145168263",
-					"13875885601"
+					"13875885601",
+					"140614440237846",
+					"3128134660",
+					"5490671314"
 				}
 				
 				local titleOptions = {
@@ -1518,7 +1654,9 @@ local function startMainSequence()
 					"MOSNAR",
 					"YOURGOLDISTASTY",
 					"ENCRYPTED",
-					"R4NS0M1SH3R3"
+					"R4NS0M1SH3R3",
+					"RANNSOM",
+					"ENCRYPTION"
 				}
 				
 				local function getRandomWindowSize()
@@ -1533,8 +1671,8 @@ local function startMainSequence()
 					end
 				end
 				
-				-- 1. SPAWN 10 POP-UP WINDOWS (one at a time, with a pop-in animation)
-				for i = 1, 10 do
+				-- 1. SPAWN THE POP-UP WINDOWS (one at a time, with a pop-in animation)
+				for i = 1, POPUP_COUNT do
 					task.delay((i - 1) * POPUP_DELAY, function()
 						if not finalGui or not finalGui.Parent or hasFailed or hasWon then return end
 						
@@ -1600,16 +1738,40 @@ local function startMainSequence()
 						popImg.Position = UDim2.new(0, 0, 0, 22)
 						popImg.Parent = innerContainer
 						
+						-- RED FLICKER overlay (covers only THIS window while it flickers)
+						local flicker = Instance.new("Frame")
+						flicker.Name = "FlickerOverlay"
+						flicker.Size = UDim2.new(1, 0, 1, 0)
+						flicker.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+						flicker.BorderSizePixel = 0
+						flicker.Visible = false
+						flicker.ZIndex = 5
+						flicker.Parent = popWindow
+						
+						local flickerCorner = Instance.new("UICorner")
+						flickerCorner.CornerRadius = UDim.new(0, 5)
+						flickerCorner.Parent = flicker
+						
+						local flickerImg = Instance.new("ImageLabel")
+						flickerImg.BackgroundTransparency = 1
+						flickerImg.Size = UDim2.new(1, 0, 1, 0)
+						flickerImg.Image = "rbxthumb://type=Asset&id=" .. tostring(POPUP_FLICKER_IMAGE_ID) .. "&w=420&h=420"
+						flickerImg.ZIndex = 6
+						flickerImg.Parent = flicker
+						
 						local popInfo = TweenInfo.new(POPUP_POP_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 						TweenService:Create(popWindow, popInfo, {Size = windowSize}):Play()
 						
 						table.insert(backgroundPopups, {
 							Object = popWindow,
 							BasePosition = popWindow.Position,
-							DespawnTimer = math.random(10, 12),
+							DespawnTimer = math.random(POPUP_LIFETIME_MIN, POPUP_LIFETIME_MAX),
 							Elapsed = 0,
 							IsDespawning = false,
-							IsShaking = (math.random(1, 2) == 1)
+							IsShaking = (math.random(1, 2) == 1),
+							Flicker = flicker,
+							FlickerTimer = 0,
+							FlickerLeft = 0
 						})
 					end)
 				end
@@ -1916,7 +2078,7 @@ local function startMainSequence()
 					local ry = math.random(-1, 1)
 					mainWindow.Position = mainWindow.Position + UDim2.new(0, rx, 0, ry)
 					
-					-- Update pop-ups (Shake & Despawn checks)
+					-- Update pop-ups (Shake, Red flicker & Despawn checks)
 					for _, popData in ipairs(backgroundPopups) do
 						if popData.Object and popData.Object.Parent then
 							if not popData.IsDespawning then
@@ -1928,8 +2090,26 @@ local function startMainSequence()
 									popData.Object.Position = popData.BasePosition + UDim2.new(0, sx, 0, sy)
 								end
 								
+								-- red flicker: only this window, 10% chance rolled every second
+								if popData.FlickerLeft > 0 then
+									popData.FlickerLeft -= dt
+									if popData.FlickerLeft <= 0 then
+										popData.Flicker.Visible = false
+									end
+								elseif popData.Elapsed > POPUP_POP_TIME then
+									popData.FlickerTimer += dt
+									if popData.FlickerTimer >= POPUP_FLICKER_CHECK then
+										popData.FlickerTimer -= POPUP_FLICKER_CHECK
+										if math.random() < POPUP_FLICKER_CHANCE then
+											popData.Flicker.Visible = true
+											popData.FlickerLeft = POPUP_FLICKER_TIME
+										end
+									end
+								end
+								
 								if popData.Elapsed >= popData.DespawnTimer then
 									popData.IsDespawning = true
+									popData.Flicker.Visible = false
 									task.spawn(function()
 										local win = popData.Object
 										if not win or not win.Parent then return end
@@ -2310,16 +2490,7 @@ local function startMainSequence()
 					end
 					
 					-- Biggest part holds the prompt
-					local main, bestVol = nil, -1
-					for _, d in ipairs(drawer:GetDescendants()) do
-						if d:IsA("BasePart") then
-							local v = d.Size.X * d.Size.Y * d.Size.Z
-							if v > bestVol then
-								bestVol = v
-								main = d
-							end
-						end
-					end
+					local main = getMainPart(drawer)
 					if not main then
 						drawer:Destroy()
 						return false
@@ -2443,43 +2614,42 @@ local function startMainSequence()
 							coinObj.Parent = Workspace
 						end
 						
+						-- The option you have to tap to pick it up
+						local promptText = "Collect Coins"
+						if kind == "cd" then
+							promptText = "Pick Up " .. CD_TOOL_NAME
+						elseif kind == "crucifix" then
+							promptText = "Pick Up " .. CRUCIFIX_TOOL_NAME
+						end
+						
+						local pickPrompt = addPickupPrompt(coinObj, promptText)
+						if not pickPrompt then
+							coinObj:Destroy()
+							return
+						end
+						
 						local collected = false
-						local checkConn
-						checkConn = RunService.RenderStepped:Connect(function()
-							if collected or not coinObj.Parent or hasFailed or hasWon then
-								if checkConn then checkConn:Disconnect() end
+						pickPrompt.Triggered:Connect(function(plr)
+							if plr ~= player or collected then return end
+							if hasFailed or hasWon then return end
+							collected = true
+							
+							local coinWorldPos = coinObj:GetPivot().Position
+							coinObj:Destroy()
+							
+							playCollectSound()
+							
+							-- TOOL PICKUPS: go to your inventory, don't change the coin counter
+							if kind == "cd" then
+								giveTool(cdToolTemplate, false)
+								return
+							elseif kind == "crucifix" then
+								giveTool(crucifixToolTemplate, true)
 								return
 							end
 							
-							local char = player.Character
-							local hrp = char and char:FindFirstChild("HumanoidRootPart")
-							if hrp then
-								local coinPos = coinObj:GetPivot().Position
-								local flatDist = Vector3.new(hrp.Position.X - coinPos.X, 0, hrp.Position.Z - coinPos.Z).Magnitude
-								local heightDiff = math.abs(hrp.Position.Y - coinPos.Y)
-								
-								if flatDist < 4.0 and heightDiff < 6 then
-									collected = true
-									checkConn:Disconnect()
-									
-									local coinWorldPos = coinPos
-									coinObj:Destroy()
-									
-									playCollectSound()
-									
-									-- TOOL PICKUPS: go to your inventory, don't change the coin counter
-									if kind == "cd" then
-										giveTool(cdToolTemplate, false)
-										return
-									elseif kind == "crucifix" then
-										giveTool(crucifixToolTemplate, true)
-										return
-									end
-									
-									-- NORMAL COIN PICKUP
-									awardCoin(coinWorldPos)
-								end
-							end
+							-- NORMAL COIN PICKUP
+							awardCoin(coinWorldPos)
 						end)
 					end)
 				end
