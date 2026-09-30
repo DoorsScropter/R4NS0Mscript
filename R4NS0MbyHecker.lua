@@ -30,7 +30,10 @@ local TV_STATIC_SOUND_ID = 138347177735590
 local TV_IDLE_STATIC_VOLUME = 0.6 -- quiet static while the TV just stands there (0 = silent)
 local TV_ACTIVE_STATIC_VOLUME = 3 -- static volume while opening / shaking
 local TV_OPEN_DELAY = 0.8 -- seconds the TV stays white before the clone starts coming out
-local TV_SHAKE_TIME = 4 -- how long the TV shakes when you insert the disc
+local TV_SHAKE_TIME = 7 -- how long the TV shakes when you insert the disc
+local TV_DISC_SOUND_ID = 124085357123084 -- audio that plays after the shake, right before the evil clone spawns
+local TV_DISC_SOUND_VOLUME = 5
+local TV_DISC_SOUND_MAX_WAIT = 4 -- the evil clone never waits longer than this for the audio (seconds)
 local TV_STAY_WHITE = false -- false = TV goes back to normal after the clone is out, true = stays white
 local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
 
@@ -81,6 +84,9 @@ if SoundService:FindFirstChild("SpawnSound") then
 end
 if SoundService:FindFirstChild("VictorySound") then
 	SoundService.VictorySound:Destroy()
+end
+if SoundService:FindFirstChild("TVDiscSound") then
+	SoundService.TVDiscSound:Destroy()
 end
 
 -- Cleanup old spawned map coins / CDs / TV / drawers / clones from a previous run
@@ -875,7 +881,32 @@ local function setupTV(tv, groundY)
 		setStatic(TV_IDLE_STATIC_VOLUME)
 	end
 	
-	-- INSERT DISC: TV shakes, (normal clone rewinds into the TV if it's out), then the EVIL clone comes out
+	-- Plays the disc audio and waits for it to finish (never longer than TV_DISC_SOUND_MAX_WAIT)
+	local function playDiscAudio()
+		local discSound = Instance.new("Sound")
+		discSound.Name = "TVDiscSound"
+		discSound.SoundId = "rbxassetid://" .. tostring(TV_DISC_SOUND_ID)
+		discSound.Volume = TV_DISC_SOUND_VOLUME
+		discSound.Parent = SoundService
+		
+		local ended = false
+		discSound.Ended:Connect(function()
+			ended = true
+		end)
+		discSound:Play()
+		
+		local t0 = os.clock()
+		while not ended and os.clock() - t0 < TV_DISC_SOUND_MAX_WAIT do
+			-- if the audio never loaded, don't keep waiting
+			if os.clock() - t0 > 1 and discSound.TimeLength == 0 then
+				break
+			end
+			RunService.Heartbeat:Wait()
+		end
+		discSound:Destroy()
+	end
+	
+	-- INSERT DISC: TV shakes 7s (normal clone rewinds into the TV if it's out), audio plays, then the EVIL clone comes out
 	local function insertDisc(cdTool, ctl)
 		phase = "busy"
 		if CD_CONSUMED then
@@ -896,6 +927,7 @@ local function setupTV(tv, groundY)
 				end
 			end
 			
+			-- Shake
 			local base = tv:GetPivot()
 			local t0 = os.clock()
 			while os.clock() - t0 < TV_SHAKE_TIME and tv.Parent do
@@ -916,6 +948,15 @@ local function setupTV(tv, groundY)
 			end
 			
 			doRestoreTV()
+			
+			-- Shake is over: static cuts out, the audio plays, THEN the evil clone spawns
+			setStatic(0)
+			playDiscAudio()
+			
+			if not tv.Parent then
+				cycleDone()
+				return
+			end
 			runCloneEntity(true, tv, groundY, nil, cycleDone)
 		end)
 	end
