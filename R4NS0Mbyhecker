@@ -1,0 +1,2081 @@
+-- DOORS Compatible GUI + Spawn Sound + Fixed Movement Detection (R4NS0M Title + Custom Pop-up Names + Shaking Popups)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- COIN MODEL SETTINGS
+local COIN_ASSET_ID = 130662993839681
+local COIN_SCALE = 1 -- make bigger/smaller (example: 1.5 or 0.7)
+local COIN_ROTATION = CFrame.Angles(0, 0, 0) -- if the coin lies wrong, try CFrame.Angles(math.rad(90), 0, 0) or CFrame.Angles(0, 0, math.rad(90))
+local COIN_HOVER = 0.15 -- how far the coin floats above the ground
+
+-- CD-1 TOOL SETTINGS
+local CD_ASSET_ID = 116084743176043
+local CD_CHANCE = 0.01 -- 1% chance per spawn (only ONE CD ever spawns per run)
+local CD_TOOL_NAME = "CD-1"
+local CD_SCALE = 0.4 -- size of the CD (on the ground AND in your hand). 1 = original size
+local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used if the model isn't already a Tool)
+
+-- TV SETTINGS
+local TV_ASSET_ID = 121471462
+local TV_CHANCE = 0.01 -- 1% chance per spawn (only ONE TV ever spawns per run)
+local TV_ROTATION = CFrame.Angles(0, 0, 0) -- if the TV faces the wrong way, try CFrame.Angles(0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
+local TV_STATIC_SOUND_ID = 138347177735590
+local TV_IDLE_STATIC_VOLUME = 0.6 -- quiet static while the TV just stands there (0 = silent)
+local TV_ACTIVE_STATIC_VOLUME = 3 -- static volume while opening / shaking
+local TV_OPEN_DELAY = 0.8 -- seconds the TV stays white before the clone starts coming out
+local TV_SHAKE_TIME = 4 -- how long the TV shakes when you insert the disc
+local TV_STAY_WHITE = false -- false = TV goes back to normal after the clone is out, true = stays white
+local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
+
+-- CLONE SETTINGS
+local CLONE_SPEED = 12 -- normal clone speed (your walk speed is 16)
+local EVIL_CLONE_SPEED = 15 -- evil clone speed
+local EVIL_STOP_EVERY = 5 -- evil clone stops every X seconds
+local EVIL_STOP_TIME = 0.5 -- and stays still for this long
+local CLONE_EMERGE_TIME = 1.6 -- how long it takes to come out of the TV
+local CLONE_KILL_DISTANCE = 3.2 -- how close it has to get to kill you
+local EVIL_IMAGE_ID = 105690422013136
+local REWIND_MAX_TIME = 2.5 -- the normal clone's rewind never takes longer than this (seconds)
+local REWIND_MIN_RATE = 120 -- minimum rewind speed (recorded frames per second)
+
+-- DRAWER SETTINGS
+local DRAWER_ASSET_ID = 11213956867
+local DRAWER_CHANCE = 0.10 -- 10% chance per spawn cycle that a drawer spawns instead of a coin
+local DRAWER_COIN_CHANCE = 0.5 -- chance that looting a drawer gives you a coin (0.5 = 50%)
+local DRAWER_ROTATION = CFrame.Angles(0, 0, 0) -- if the drawer faces the wrong way, try (0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
+local DRAWER_PERSIST = false -- false = drawers are removed when R4NS0M ends, true = they stay forever like the TV
+
+-- POP-UP SPAWN SETTINGS
+local POPUP_DELAY = 0.1 -- seconds between each pop-up appearing
+local POPUP_POP_TIME = 0.3 -- how long each pop-in animation takes
+
+-- Only one TV and one CD can ever spawn
+local tvSpawned = false
+local cdSpawned = false
+
+-- Clean up any old GUI or leftover sounds from previous executions
+if playerGui:FindFirstChild("JumpscareDownloadGui") then
+	playerGui.JumpscareDownloadGui:Destroy()
+end
+if playerGui:FindFirstChild("FinalShakyGui") then
+	playerGui.FinalShakyGui:Destroy()
+end
+if playerGui:FindFirstChild("FailureJumpscareGui") then
+	playerGui.FailureJumpscareGui:Destroy()
+end
+if playerGui:FindFirstChild("VictoryPopupGui") then
+	playerGui.VictoryPopupGui:Destroy()
+end
+if SoundService:FindFirstChild("JumpscareSound") then
+	SoundService.JumpscareSound:Destroy()
+end
+if SoundService:FindFirstChild("SpawnSound") then
+	SoundService.SpawnSound:Destroy()
+end
+if SoundService:FindFirstChild("VictorySound") then
+	SoundService.VictorySound:Destroy()
+end
+
+-- Cleanup old spawned map coins / CDs / TV / drawers / clones from a previous run
+for _, obj in ipairs(Workspace:GetChildren()) do
+	if obj.Name == "MapCollectibleCoin" or obj.Name == "R4NS0M_TV" or obj.Name == "R4NS0M_Drawer"
+		or obj.Name == "R4NS0M_Clone" or obj.Name == "R4NS0M_EvilClone" then
+		obj:Destroy()
+	end
+end
+
+-- Removes what belongs to the R4NS0M round when it ends (coins, and drawers unless DRAWER_PERSIST)
+local function clearRoundObjects()
+	for _, obj in ipairs(Workspace:GetChildren()) do
+		if obj.Name == "MapCollectibleCoin" or (not DRAWER_PERSIST and obj.Name == "R4NS0M_Drawer") then
+			obj:Destroy()
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- LOAD COIN MODEL (Delta compatible: game:GetObjects)
+--------------------------------------------------------------------------------
+local coinTemplate = nil
+
+task.spawn(function()
+	local ok, result = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(COIN_ASSET_ID))
+	end)
+	if ok and result and result[1] then
+		local template = result[1]
+		-- Strip scripts so the model can't run anything
+		for _, d in ipairs(template:GetDescendants()) do
+			if d:IsA("Script") or d:IsA("LocalScript") then
+				d:Destroy()
+			end
+		end
+		-- Prepare parts: anchored, no collision, not touchable
+		local function preparePart(p)
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = false
+			p.Massless = true
+		end
+		if template:IsA("BasePart") then
+			preparePart(template)
+		end
+		for _, d in ipairs(template:GetDescendants()) do
+			if d:IsA("BasePart") then
+				preparePart(d)
+			end
+		end
+		coinTemplate = template
+	else
+		warn("Coin model failed to load, using cylinder coins instead.")
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- LOAD CD-1 TOOL (turns whatever the asset is into a holdable Tool)
+--------------------------------------------------------------------------------
+local cdToolTemplate = nil
+
+-- Scales a Tool / Model / Part (works on Tools by temporarily wrapping their contents)
+local function scaleInstance(inst, s)
+	if s == 1 then return end
+	pcall(function()
+		if inst:IsA("Model") then
+			inst:ScaleTo(s)
+		elseif inst:IsA("BasePart") then
+			inst.Size = inst.Size * s
+		else
+			-- Tool: move children into a temp model, scale, move back
+			local wrapper = Instance.new("Model")
+			for _, child in ipairs(inst:GetChildren()) do
+				child.Parent = wrapper
+			end
+			wrapper:ScaleTo(s)
+			for _, child in ipairs(wrapper:GetChildren()) do
+				child.Parent = inst
+			end
+			wrapper:Destroy()
+		end
+	end)
+end
+
+local function buildCDTool(loaded)
+	local source = loaded:Clone()
+	
+	-- Strip scripts so the asset can't run anything
+	for _, d in ipairs(source:GetDescendants()) do
+		if d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		end
+	end
+	
+	local tool
+	
+	if source:IsA("Tool") and source:FindFirstChild("Handle") then
+		-- The asset is already a proper tool
+		tool = source
+	else
+		-- Build a tool out of the model's parts
+		local parts = {}
+		if source:IsA("BasePart") then
+			parts = {source}
+		else
+			for _, d in ipairs(source:GetDescendants()) do
+				if d:IsA("BasePart") then
+					table.insert(parts, d)
+				end
+			end
+		end
+		if #parts == 0 then
+			error("CD asset has no parts")
+		end
+		
+		-- Pick the handle: PrimaryPart if there is one, otherwise the biggest part
+		local handle = nil
+		if source:IsA("Model") and source.PrimaryPart then
+			handle = source.PrimaryPart
+		end
+		if not handle then
+			local bestVolume = -1
+			for _, p in ipairs(parts) do
+				local v = p.Size.X * p.Size.Y * p.Size.Z
+				if v > bestVolume then
+					bestVolume = v
+					handle = p
+				end
+			end
+		end
+		
+		tool = Instance.new("Tool")
+		tool.RequiresHandle = true
+		tool.Grip = CD_GRIP
+		
+		for _, p in ipairs(parts) do
+			p.Anchored = false
+			p.CanCollide = false
+			if p ~= handle then
+				local weld = Instance.new("Weld")
+				weld.Part0 = handle
+				weld.Part1 = p
+				weld.C0 = handle.CFrame:ToObjectSpace(p.CFrame)
+				weld.Parent = p
+			end
+		end
+		
+		handle.Name = "Handle"
+		for _, p in ipairs(parts) do
+			p.Parent = tool
+		end
+	end
+	
+	tool.Name = CD_TOOL_NAME
+	tool.ToolTip = CD_TOOL_NAME
+	tool.CanBeDropped = false
+	
+	-- Shrink it (affects both the ground version and the one in your hand)
+	scaleInstance(tool, CD_SCALE)
+	
+	return tool
+end
+
+task.spawn(function()
+	local ok, result = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(CD_ASSET_ID))
+	end)
+	if ok and result and result[1] then
+		local built, tool = pcall(buildCDTool, result[1])
+		if built and tool then
+			cdToolTemplate = tool
+		else
+			warn("CD-1 failed to build: " .. tostring(tool))
+		end
+	else
+		warn("CD-1 model failed to load, only coins will spawn.")
+	end
+end)
+
+-- Makes the version of the CD that sits on the map (anchored copy of the tool's parts, already scaled)
+local function makeCDDisplay()
+	local model = Instance.new("Model")
+	model.Name = "MapCollectibleCoin" -- same name as coins so cleanup removes it too
+	model:SetAttribute("IsCD", true)
+	
+	local clone = cdToolTemplate:Clone()
+	for _, child in ipairs(clone:GetChildren()) do
+		child.Parent = model
+	end
+	
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+		end
+	end
+	
+	return model
+end
+
+--------------------------------------------------------------------------------
+-- LOAD STATIC MODELS (TV + DRAWER): collidable, anchored, can't be collected
+--------------------------------------------------------------------------------
+local tvTemplate = nil
+local drawerTemplate = nil
+
+local function buildStaticModel(assetId, modelName)
+	local ok, result = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(assetId))
+	end)
+	if not ok or not result or #result == 0 then
+		warn(modelName .. " model failed to load.")
+		return nil
+	end
+	local model = Instance.new("Model")
+	model.Name = modelName
+	for _, inst in ipairs(result) do
+		inst.Parent = model
+	end
+	local hasPart = false
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("LuaSourceContainer") or d:IsA("ClickDetector") or d:IsA("ProximityPrompt") or d:IsA("Sound") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			hasPart = true
+			d.Anchored = true
+			d.CanCollide = true -- collision ON
+		end
+	end
+	if not hasPart then
+		warn(modelName .. " model has no parts.")
+		return nil
+	end
+	return model
+end
+
+task.spawn(function()
+	tvTemplate = buildStaticModel(TV_ASSET_ID, "R4NS0M_TV")
+end)
+task.spawn(function()
+	drawerTemplate = buildStaticModel(DRAWER_ASSET_ID, "R4NS0M_Drawer")
+end)
+
+--------------------------------------------------------------------------------
+-- HELPERS: tint the TV (white flash) and kill the player
+--------------------------------------------------------------------------------
+local function tintModel(model, color)
+	local undo = {}
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local oc, om = d.Color, d.Material
+			table.insert(undo, function()
+				d.Color = oc
+				d.Material = om
+			end)
+			d.Color = color
+			d.Material = Enum.Material.Neon
+			if d:IsA("MeshPart") then
+				local ot = d.TextureID
+				if ot ~= "" then
+					table.insert(undo, function()
+						d.TextureID = ot
+					end)
+					pcall(function()
+						d.TextureID = ""
+					end)
+				end
+			end
+		elseif d:IsA("SpecialMesh") then
+			local ot = d.TextureId
+			if ot ~= "" then
+				table.insert(undo, function()
+					d.TextureId = ot
+				end)
+				pcall(function()
+					d.TextureId = ""
+				end)
+			end
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			local ot = d.Transparency
+			table.insert(undo, function()
+				d.Transparency = ot
+			end)
+			d.Transparency = 1
+		end
+	end
+	return function()
+		for _, f in ipairs(undo) do
+			pcall(f)
+		end
+	end
+end
+
+local function killPlayer(hum)
+	pcall(function()
+		hum.Health = 0
+	end)
+	pcall(function()
+		hum:ChangeState(Enum.HumanoidStateType.Dead)
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- AVATAR CLONE (normal = copy of you, evil = red version with the image)
+--------------------------------------------------------------------------------
+local RED = Color3.fromRGB(255, 0, 0)
+
+local function makeAvatarClone(evil)
+	local char = player.Character
+	if not char then return nil end
+	
+	char.Archivable = true
+	local okClone, clone = pcall(function()
+		return char:Clone()
+	end)
+	if not okClone or not clone then return nil end
+	clone.Name = evil and "R4NS0M_EvilClone" or "R4NS0M_Clone"
+	
+	-- Remove anything that could run, make noise, or show name tags
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("LuaSourceContainer") or d:IsA("Sound") or d:IsA("BillboardGui") or d:IsA("ForceField") or d:IsA("Tool") then
+			d:Destroy()
+		end
+	end
+	
+	-- Evil version: strip clothes / face so it can be pure red
+	if evil then
+		for _, d in ipairs(clone:GetDescendants()) do
+			if d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") or d:IsA("BodyColors")
+				or d:IsA("Decal") or d:IsA("Texture") or d:IsA("SurfaceAppearance") then
+				d:Destroy()
+			end
+		end
+	end
+	
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = false
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+			d.Massless = true
+			if evil then
+				d.Color = RED
+				d.Material = Enum.Material.Neon
+				if d:IsA("MeshPart") then
+					pcall(function()
+						d.TextureID = ""
+					end)
+				end
+			end
+		elseif d:IsA("SpecialMesh") and evil then
+			pcall(function()
+				d.TextureId = ""
+			end)
+		end
+	end
+	
+	-- Only the root is anchored; the rest follows it and can still animate
+	local hrp = clone:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		clone:Destroy()
+		return nil
+	end
+	hrp.Anchored = true
+	
+	local hum = clone:FindFirstChildOfClass("Humanoid")
+	if hum then
+		pcall(function()
+			hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+			hum.BreakJointsOnDeath = false
+			hum.RequiresNeck = false
+			hum.MaxHealth = 1e9
+			hum.Health = 1e9
+			hum.WalkSpeed = 0
+		end)
+		pcall(function()
+			hum.EvaluateStateMachine = false
+		end)
+	end
+	
+	if evil then
+		local torso = clone:FindFirstChild("UpperTorso") or clone:FindFirstChild("Torso")
+		if torso then
+			local light = Instance.new("PointLight")
+			light.Color = RED
+			light.Range = 14
+			light.Brightness = 2
+			light.Parent = torso
+		end
+	end
+	
+	return clone
+end
+
+-- Billboard with the image, sitting in the torso (evil clone only)
+local function attachEvilBillboard(clone)
+	local torso = clone:FindFirstChild("UpperTorso") or clone:FindFirstChild("Torso")
+	if not torso then return nil, nil end
+	
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "EvilImage"
+	gui.Adornee = torso
+	gui.AlwaysOnTop = true -- shows through the body
+	gui.LightInfluence = 0
+	gui.Size = UDim2.new(4, 0, 4, 0)
+	gui.Enabled = false
+	gui.Parent = torso
+	
+	local img = Instance.new("ImageLabel")
+	img.Name = "Image"
+	img.BackgroundTransparency = 1
+	img.AnchorPoint = Vector2.new(0.5, 0.5)
+	img.Position = UDim2.new(0.5, 0, 0.5, 0)
+	img.Size = UDim2.new(1, 0, 1, 0)
+	img.Image = "rbxthumb://type=Asset&id=" .. tostring(EVIL_IMAGE_ID) .. "&w=420&h=420"
+	img.Parent = gui
+	
+	return gui, img
+end
+
+-- Matches the clone's joints to your joints so it copies your animations
+local function buildMotorPairs(srcChar, clone)
+	local src = {}
+	for _, d in ipairs(srcChar:GetDescendants()) do
+		if d:IsA("Motor6D") then
+			src[d.Name] = d
+		end
+	end
+	local list = {}
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("Motor6D") and src[d.Name] then
+			table.insert(list, {clone = d, src = src[d.Name]})
+		end
+	end
+	return list
+end
+
+--------------------------------------------------------------------------------
+-- RUNS A CLONE: comes out of the TV, copies your movements, chases you, kills on touch
+-- Returns a controller (normal clone can be rewound back into the TV)
+--------------------------------------------------------------------------------
+local function runCloneEntity(evil, tvModel, tvGroundY, onEmerged, onGone)
+	local ownerChar = player.Character
+	local ownerHrp = ownerChar and ownerChar:FindFirstChild("HumanoidRootPart")
+	local ownerHum = ownerChar and ownerChar:FindFirstChildOfClass("Humanoid")
+	if not ownerHrp or not ownerHum or ownerHum.Health <= 0 then
+		if onGone then task.spawn(onGone) end
+		return nil
+	end
+	
+	local clone = makeAvatarClone(evil)
+	if not clone then
+		warn("Couldn't clone your character.")
+		if onGone then task.spawn(onGone) end
+		return nil
+	end
+	local cHrp = clone:FindFirstChild("HumanoidRootPart")
+	
+	-- How high the root sits above the ground
+	local hipOffset = 3
+	if ownerHum.RigType == Enum.HumanoidRigType.R15 then
+		hipOffset = ownerHum.HipHeight + ownerHrp.Size.Y / 2
+	end
+	
+	-- Where it comes out of the TV
+	local tvCF, tvSize = tvModel:GetBoundingBox()
+	local tvCenter = tvCF.Position
+	local toPlayer = Vector3.new(ownerHrp.Position.X - tvCenter.X, 0, ownerHrp.Position.Z - tvCenter.Z)
+	local dir = toPlayer.Magnitude > 0.1 and toPlayer.Unit or Vector3.new(0, 0, -1)
+	local emergeDist = math.max(tvSize.X, tvSize.Z) / 2 + 3.5
+	local startPos = Vector3.new(tvCenter.X, tvGroundY + hipOffset, tvCenter.Z)
+	local endPos = startPos + dir * emergeDist
+	
+	-- Start invisible, fade in while walking out
+	local fadeList = {}
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then
+			table.insert(fadeList, {inst = d, orig = d.Transparency})
+			d.Transparency = 1
+		end
+	end
+	
+	local motorPairs = buildMotorPairs(ownerChar, clone)
+	local billboard, billboardImg = nil, nil
+	if evil then
+		billboard, billboardImg = attachEvilBillboard(clone)
+	end
+	
+	clone.Parent = Workspace
+	cHrp.CFrame = CFrame.lookAt(startPos, startPos + dir)
+	
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.IgnoreWater = true
+	rayParams.FilterDescendantsInstances = {ownerChar, clone, tvModel}
+	
+	local speed = evil and EVIL_CLONE_SPEED or CLONE_SPEED
+	local state = "emerge"
+	local elapsed = 0
+	local curY = startPos.Y
+	local facing = dir
+	local stopped = false
+	local phaseTimer = 0
+	local glitchTimer = 0
+	local finished = false
+	local conn
+	
+	-- Recording (normal clone only) so it can rewind
+	local hist = {}
+	local rewindCb = nil
+	local rewindIdx = 0
+	
+	local function record(a)
+		local poses = {}
+		for k, m in ipairs(motorPairs) do
+			poses[k] = m.src.Transform
+		end
+		hist[#hist + 1] = {cf = cHrp.CFrame, a = a, poses = poses}
+		if #hist > 6000 then
+			local thinned = {}
+			for i = 1, #hist, 2 do
+				thinned[#thinned + 1] = hist[i]
+			end
+			hist = thinned
+		end
+	end
+	
+	local function finish()
+		if finished then return end
+		finished = true
+		if conn then conn:Disconnect() end
+		if clone then clone:Destroy() end
+		if rewindCb then
+			task.spawn(rewindCb)
+		elseif onGone then
+			task.spawn(onGone)
+		end
+	end
+	
+	local ctl = {}
+	function ctl.IsReady()
+		return (not finished) and (not evil) and state == "chase"
+	end
+	function ctl.Rewind(cb)
+		if not ctl.IsReady() or #hist < 2 then
+			return false
+		end
+		rewindCb = cb
+		rewindIdx = #hist
+		state = "rewind"
+		return true
+	end
+	
+	local function copyPose()
+		for _, m in ipairs(motorPairs) do
+			if m.src.Parent and m.clone.Parent then
+				m.clone.Transform = m.src.Transform
+			end
+		end
+	end
+	
+	conn = RunService.RenderStepped:Connect(function(dt)
+		if finished then return end
+		
+		local char = player.Character
+		local pHrp = char and char:FindFirstChild("HumanoidRootPart")
+		local pHum = char and char:FindFirstChildOfClass("Humanoid")
+		if char ~= ownerChar or not pHrp or not pHum or pHum.Health <= 0 or not clone.Parent then
+			finish()
+			return
+		end
+		
+		-- Copy your movements / animations (frozen while the evil clone is stopped, replaced while rewinding)
+		if not stopped and state ~= "rewind" then
+			copyPose()
+		end
+		
+		---------------- REWIND: walks backwards into the TV and disappears ----------------
+		if state == "rewind" then
+			local n = #hist
+			local rate = math.max(REWIND_MIN_RATE, n / REWIND_MAX_TIME)
+			rewindIdx = rewindIdx - rate * dt
+			local s = hist[math.max(1, math.floor(rewindIdx))]
+			if s then
+				cHrp.CFrame = s.cf
+				for k, m in ipairs(motorPairs) do
+					if s.poses[k] and m.clone.Parent then
+						m.clone.Transform = s.poses[k]
+					end
+				end
+				for _, item in ipairs(fadeList) do
+					item.inst.Transparency = 1 - (1 - item.orig) * s.a
+				end
+			end
+			if rewindIdx <= 1 then
+				finish()
+			end
+			return
+		end
+		
+		---------------- COMING OUT OF THE TV ----------------
+		if state == "emerge" then
+			elapsed += dt
+			local a = math.clamp(elapsed / CLONE_EMERGE_TIME, 0, 1)
+			local eased = 1 - (1 - a) * (1 - a)
+			local pos = startPos:Lerp(endPos, eased)
+			cHrp.CFrame = CFrame.lookAt(pos, pos + dir)
+			for _, item in ipairs(fadeList) do
+				item.inst.Transparency = 1 - (1 - item.orig) * a
+			end
+			if not evil then
+				record(a)
+			end
+			if a >= 1 then
+				state = "chase"
+				curY = pos.Y
+				if billboard then billboard.Enabled = true end
+				if onEmerged then task.spawn(onEmerged) end
+			end
+			return
+		end
+		
+		---------------- CHASING ----------------
+		local cPos = cHrp.Position
+		local toP = Vector3.new(pHrp.Position.X - cPos.X, 0, pHrp.Position.Z - cPos.Z)
+		local flatDist = toP.Magnitude
+		
+		-- Evil clone: moves for 5s, stops for 0.5s
+		if evil then
+			phaseTimer += dt
+			if not stopped and phaseTimer >= EVIL_STOP_EVERY then
+				stopped = true
+				phaseTimer = 0
+				if billboardImg then
+					billboardImg.Position = UDim2.new(0.5, 0, 0.5, 0)
+					billboardImg.ImageTransparency = 0
+				end
+			elseif stopped and phaseTimer >= EVIL_STOP_TIME then
+				stopped = false
+				phaseTimer = 0
+				glitchTimer = 1
+			end
+		end
+		
+		if not stopped then
+			if flatDist > 0.05 then
+				facing = toP.Unit
+			end
+			local step = math.min(speed * dt, flatDist)
+			local newX = cPos.X + facing.X * step
+			local newZ = cPos.Z + facing.Z * step
+			
+			local hit = Workspace:Raycast(Vector3.new(newX, curY + 4, newZ), Vector3.new(0, -25, 0), rayParams)
+			local targetY = hit and (hit.Position.Y + hipOffset) or curY
+			curY = curY + (targetY - curY) * math.min(1, dt * 12)
+			
+			local newPos = Vector3.new(newX, curY, newZ)
+			cHrp.CFrame = CFrame.lookAt(newPos, newPos + facing)
+			
+			-- Images flickering through the body while it moves
+			if billboardImg then
+				glitchTimer += dt
+				if glitchTimer >= 0.05 then
+					glitchTimer = 0
+					billboardImg.Position = UDim2.new(0.5 + (math.random() - 0.5) * 0.7, 0, 0.5 + (math.random() - 0.5) * 0.9, 0)
+					billboardImg.ImageTransparency = 0.45 + math.random() * 0.5
+				end
+			end
+		end
+		
+		if not evil then
+			record(1)
+		end
+		
+		-- Touch = instant death
+		local dx = pHrp.Position.X - cHrp.Position.X
+		local dz = pHrp.Position.Z - cHrp.Position.Z
+		local dy = math.abs(pHrp.Position.Y - cHrp.Position.Y)
+		if math.sqrt(dx * dx + dz * dz) < CLONE_KILL_DISTANCE and dy < 5 then
+			killPlayer(pHum)
+			finish()
+		end
+	end)
+	
+	return ctl
+end
+
+--------------------------------------------------------------------------------
+-- TV SETUP (prompt, static sound, open / insert disc / rewind)
+--------------------------------------------------------------------------------
+local function setupTV(tv, groundY)
+	-- Biggest part holds the prompt and the sound
+	local main, bestVol = nil, -1
+	for _, d in ipairs(tv:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local v = d.Size.X * d.Size.Y * d.Size.Z
+			if v > bestVol then
+				bestVol = v
+				main = d
+			end
+		end
+	end
+	if not main then
+		tv:Destroy()
+		return
+	end
+	
+	-- Static sound
+	local staticSound = Instance.new("Sound")
+	staticSound.Name = "TVStatic"
+	staticSound.SoundId = "rbxassetid://" .. tostring(TV_STATIC_SOUND_ID)
+	staticSound.Looped = true
+	staticSound.Volume = TV_IDLE_STATIC_VOLUME
+	staticSound.RollOffMaxDistance = 45
+	staticSound.Parent = main
+	
+	local function setStatic(vol)
+		if vol <= 0 then
+			staticSound:Stop()
+		else
+			staticSound.Volume = vol
+			if not staticSound.IsPlaying then
+				staticSound:Play()
+			end
+		end
+	end
+	setStatic(TV_IDLE_STATIC_VOLUME)
+	
+	-- Prompt
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "TVPrompt"
+	prompt.ObjectText = ""
+	prompt.ActionText = "Open TV?"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 10
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.Parent = main
+	
+	-- "idle" = nothing happening, "busy" = something in progress, "normal" = normal clone is out and chasing
+	local phase = "idle"
+	local normalCtl = nil
+	local restoreTV = nil
+	
+	local function doRestoreTV()
+		if restoreTV then
+			local r = restoreTV
+			restoreTV = nil
+			r()
+		end
+	end
+	
+	local function holdingCD()
+		local char = player.Character
+		local t = char and char:FindFirstChild(CD_TOOL_NAME)
+		if t and t:IsA("Tool") then
+			return t
+		end
+		return nil
+	end
+	
+	-- Prompt text + availability:
+	--   idle: always usable ("Open TV?" or "Insert Disc?" if you hold the CD)
+	--   normal clone out: ONLY usable with the CD ("Insert Disc?" -> rewind)
+	local promptConn
+	promptConn = RunService.Heartbeat:Connect(function()
+		if not tv.Parent then
+			promptConn:Disconnect()
+			return
+		end
+		local holding = holdingCD() ~= nil
+		local want = holding and "Insert Disc?" or "Open TV?"
+		if prompt.ActionText ~= want then
+			prompt.ActionText = want
+		end
+		local canUse = (phase == "idle")
+			or (phase == "normal" and holding and normalCtl ~= nil and normalCtl.IsReady())
+		if prompt.Enabled ~= canUse then
+			prompt.Enabled = canUse
+		end
+	end)
+	
+	local function cycleDone()
+		phase = "idle"
+		normalCtl = nil
+		setStatic(TV_IDLE_STATIC_VOLUME)
+	end
+	
+	-- INSERT DISC: TV shakes, (normal clone rewinds into the TV if it's out), then the EVIL clone comes out
+	local function insertDisc(cdTool, ctl)
+		phase = "busy"
+		if CD_CONSUMED then
+			cdTool:Destroy()
+		end
+		task.spawn(function()
+			setStatic(TV_ACTIVE_STATIC_VOLUME)
+			
+			local rewound = true
+			if ctl then
+				rewound = false
+				normalCtl = nil
+				local started = ctl.Rewind(function()
+					rewound = true
+				end)
+				if not started then
+					rewound = true
+				end
+			end
+			
+			local base = tv:GetPivot()
+			local t0 = os.clock()
+			while os.clock() - t0 < TV_SHAKE_TIME and tv.Parent do
+				local ox = (math.random() - 0.5) * 0.24
+				local oz = (math.random() - 0.5) * 0.24
+				local rz = math.rad((math.random() - 0.5) * 3)
+				tv:PivotTo(base * CFrame.new(ox, 0, oz) * CFrame.Angles(0, 0, rz))
+				RunService.Heartbeat:Wait()
+			end
+			if tv.Parent then
+				tv:PivotTo(base)
+			end
+			
+			-- Make sure the normal clone is fully gone before the evil one comes
+			local waited = os.clock()
+			while not rewound and os.clock() - waited < 10 do
+				RunService.Heartbeat:Wait()
+			end
+			
+			doRestoreTV()
+			runCloneEntity(true, tv, groundY, nil, cycleDone)
+		end)
+	end
+	
+	-- OPEN TV: TV turns white, a clone of you comes out
+	local function openTV()
+		phase = "busy"
+		task.spawn(function()
+			restoreTV = tintModel(tv, Color3.fromRGB(255, 255, 255))
+			setStatic(TV_ACTIVE_STATIC_VOLUME)
+			task.wait(TV_OPEN_DELAY)
+			
+			normalCtl = runCloneEntity(false, tv, groundY, function()
+				phase = "normal"
+				if not TV_STAY_WHITE then
+					doRestoreTV()
+				end
+			end, function()
+				if not TV_STAY_WHITE then
+					doRestoreTV()
+				end
+				cycleDone()
+			end)
+		end)
+	end
+	
+	prompt.Triggered:Connect(function(plr)
+		if plr ~= player then return end
+		local cdTool = holdingCD()
+		
+		if phase == "idle" then
+			if cdTool then
+				insertDisc(cdTool, nil)
+			else
+				openTV()
+			end
+		elseif phase == "normal" and cdTool and normalCtl and normalCtl.IsReady() then
+			insertDisc(cdTool, normalCtl)
+		end
+	end)
+end
+
+-- Places the TV on the ground (facing you) and sets it up. It is NOT named like coins, so it never gets cleaned up.
+local function spawnTV(groundPos, playerPos)
+	if not tvTemplate then return end
+	
+	local tv = tvTemplate:Clone()
+	tv.Name = "R4NS0M_TV"
+	
+	local look = Vector3.new(playerPos.X - groundPos.X, 0, playerPos.Z - groundPos.Z)
+	local faceCF = CFrame.new(groundPos)
+	if look.Magnitude > 0.1 then
+		faceCF = CFrame.lookAt(groundPos, groundPos + look)
+	end
+	tv:PivotTo(faceCF * TV_ROTATION)
+	
+	local cf, size = tv:GetBoundingBox()
+	tv:PivotTo(tv:GetPivot() + Vector3.new(0, groundPos.Y - (cf.Position.Y - size.Y / 2), 0))
+	
+	tv.Parent = Workspace
+	setupTV(tv, groundPos.Y)
+	print("[R4NS0M] A TV spawned at " .. tostring(groundPos))
+end
+
+--------------------------------------------------------------------------------
+-- PRE-PHASE: Top-Right Corner Square Preview -> Teleport to Center Dark Red BG
+--------------------------------------------------------------------------------
+local preGui = Instance.new("ScreenGui")
+preGui.Name = "JumpscareDownloadGui"
+preGui.IgnoreGuiInset = true
+preGui.ResetOnSpawn = false
+preGui.Parent = playerGui
+
+local preBg = Instance.new("Frame")
+preBg.Size = UDim2.new(1, 0, 1, 0)
+preBg.BackgroundTransparency = 1
+preBg.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+preBg.BorderSizePixel = 0
+preBg.Parent = preGui
+
+local previewImage = Instance.new("ImageLabel")
+previewImage.Image = "rbxthumb://type=Asset&id=101391416087473&w=420&h=420"
+previewImage.BackgroundTransparency = 1
+previewImage.Size = UDim2.new(0, 240, 0, 240)
+previewImage.AnchorPoint = Vector2.new(1, 0)
+previewImage.Position = UDim2.new(1, -20, 0, 20)
+previewImage.Parent = preBg
+
+local spawnSound = Instance.new("Sound")
+spawnSound.Name = "SpawnSound"
+spawnSound.SoundId = "rbxassetid://92453621152905"
+spawnSound.Volume = 5
+spawnSound.Parent = SoundService
+spawnSound:Play()
+
+local mainSequenceTriggered = false
+
+local function startMainSequence()
+	if mainSequenceTriggered then return end
+	mainSequenceTriggered = true
+	
+	if preGui then preGui:Destroy() end
+	if spawnSound then spawnSound:Destroy() end
+	
+	local sound = Instance.new("Sound")
+	sound.Name = "JumpscareSound"
+	sound.SoundId = "rbxassetid://124085357123084"
+	sound.Volume = 10
+	sound.PlaybackSpeed = 1.0
+	sound.Parent = SoundService
+	sound:Play()
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "JumpscareDownloadGui"
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = playerGui
+
+	----------------------------------------------------------------------------
+	-- PHASE 1
+	----------------------------------------------------------------------------
+	local phase1Bg = Instance.new("Frame")
+	phase1Bg.Name = "Phase1Background"
+	phase1Bg.Size = UDim2.new(1, 0, 1, 0)
+	phase1Bg.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+	phase1Bg.BorderSizePixel = 0
+	phase1Bg.Parent = screenGui
+
+	local imageLabel = Instance.new("ImageLabel")
+	imageLabel.Name = "CenterImage"
+	imageLabel.Image = "rbxthumb://type=Asset&id=12351005389&w=420&h=420"
+	imageLabel.BackgroundTransparency = 1
+	imageLabel.Size = UDim2.new(0, 350, 0, 350)
+	imageLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+	imageLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	imageLabel.Parent = phase1Bg
+
+	local originalPosition = imageLabel.Position
+	local phase1Duration = 0.8
+	local elapsed = 0
+	local shakeIntensity = 12
+
+	local connection
+	connection = RunService.RenderStepped:Connect(function(dt)
+		elapsed += dt
+		
+		if sound and sound.IsPlaying then
+			sound.PlaybackSpeed = 1.0 + (elapsed * 0.25)
+		end
+		
+		if math.random(1, 3) == 1 then
+			phase1Bg.BackgroundColor3 = Color3.fromRGB(math.random(150, 255), 0, 0)
+		end
+		
+		if elapsed >= phase1Duration then
+			connection:Disconnect()
+			phase1Bg:Destroy()
+			return
+		end
+		
+		local offsetX = math.random(-shakeIntensity, shakeIntensity)
+		local offsetY = math.random(-shakeIntensity, shakeIntensity)
+		imageLabel.Position = originalPosition + UDim2.new(0, offsetX, 0, offsetY)
+		
+		if math.floor(elapsed * 40) % 2 == 0 then
+			imageLabel.ImageColor3 = Color3.fromRGB(255, 255, 255)
+		else
+			imageLabel.ImageColor3 = Color3.fromRGB(255, 0, 0)
+		end
+	end)
+
+	----------------------------------------------------------------------------
+	-- PHASE 2
+	----------------------------------------------------------------------------
+	task.delay(phase1Duration, function()
+		local bgFrame = Instance.new("Frame")
+		bgFrame.Name = "DownloadBackground"
+		bgFrame.Size = UDim2.new(1, 0, 1, 0)
+		bgFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+		bgFrame.BorderSizePixel = 0
+		bgFrame.Parent = screenGui
+		
+		local textLabel = Instance.new("TextLabel")
+		textLabel.Name = "DownloadingText"
+		textLabel.Size = UDim2.new(0, 500, 0, 80)
+		textLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+		textLabel.Position = UDim2.new(0.5, 0, 0.43, 0)
+		textLabel.BackgroundTransparency = 1
+		textLabel.Text = "Downloading."
+		textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+		textLabel.TextScaled = true
+		
+		local successFont, fontResult = pcall(function()
+			return Enum.Font.Oswald
+		end)
+		textLabel.Font = successFont and fontResult or Enum.Font.SourceSansBold
+		textLabel.Parent = bgFrame
+		
+		local barContainer = Instance.new("Frame")
+		barContainer.Name = "LoadingBarContainer"
+		barContainer.Size = UDim2.new(0, 480, 0, 36)
+		barContainer.AnchorPoint = Vector2.new(0.5, 0.5)
+		barContainer.Position = UDim2.new(0.5, 0, 0.57, 0)
+		barContainer.BackgroundTransparency = 0.3
+		barContainer.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+		barContainer.BorderSizePixel = 0
+		barContainer.Parent = bgFrame
+		
+		local uiList = Instance.new("UIListLayout")
+		uiList.FillDirection = Enum.FillDirection.Horizontal
+		uiList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		uiList.VerticalAlignment = Enum.VerticalAlignment.Center
+		uiList.Padding = UDim.new(0, 8)
+		uiList.Parent = barContainer
+		
+		local blocks = {}
+		for i = 1, 5 do
+			local block = Instance.new("Frame")
+			block.Name = "Block_" .. i
+			block.Size = UDim2.new(0, 84, 0, 22)
+			block.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+			block.BorderSizePixel = 0
+			block.Parent = barContainer
+			table.insert(blocks, block)
+		end
+		
+		local originalTextPos = textLabel.Position
+		local originalBarPos = barContainer.Position
+		local phase2Elapsed = 0
+		local totalPhase2Duration = 1.2
+		local textConn
+		
+		textConn = RunService.RenderStepped:Connect(function(dt)
+			phase2Elapsed += dt
+			
+			if sound and sound.IsPlaying then
+				sound.PlaybackSpeed = 1.0 + ((phase1Duration + phase2Elapsed) * 0.22)
+			end
+			
+			if math.random(1, 3) == 1 then
+				bgFrame.BackgroundColor3 = Color3.fromRGB(math.random(150, 255), 0, 0)
+			end
+			
+			local progress = math.clamp(phase2Elapsed / totalPhase2Duration, 0, 1)
+			
+			local activeBlocksCount = math.ceil(progress * 5)
+			for index, block in ipairs(blocks) do
+				if index <= activeBlocksCount then
+					block.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+				else
+					block.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+				end
+			end
+			
+			-- Finish Phase 2 and trigger Phase 3
+			if progress >= 1 then
+				textConn:Disconnect()
+				if screenGui then screenGui:Destroy() end
+				if sound then
+					sound:Stop()
+					sound:Destroy()
+				end
+				
+				--------------------------------------------------------------------
+				-- PHASE 3
+				--------------------------------------------------------------------
+				local finalGui = Instance.new("ScreenGui")
+				finalGui.Name = "FinalShakyGui"
+				finalGui.IgnoreGuiInset = true
+				finalGui.ResetOnSpawn = false
+				finalGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+				finalGui.Parent = playerGui
+				
+				local backgroundPopups = {}
+				
+				-- Declared early so delayed pop-ups can check them
+				local hasFailed = false
+				local hasWon = false
+				
+				local randomAssetList = {
+					"17665445431",
+					"17297286789",
+					"15145168263",
+					"13875885601"
+				}
+				
+				local titleOptions = {
+					"F0UND Y0U",
+					"RANSOM",
+					"MOSNAR",
+					"YOURGOLDISTASTY",
+					"ENCRYPTED",
+					"R4NS0M1SH3R3"
+				}
+				
+				local function getRandomWindowSize()
+					local shapeType = math.random(1, 3)
+					if shapeType == 1 then
+						local sz = math.random(110, 145)
+						return UDim2.new(0, sz, 0, sz + 22)
+					elseif shapeType == 2 then
+						return UDim2.new(0, math.random(160, 220), 0, math.random(120, 180) + 22)
+					else
+						return UDim2.new(0, math.random(230, 310), 0, math.random(170, 230) + 22)
+					end
+				end
+				
+				-- 1. SPAWN 10 POP-UP WINDOWS (one at a time, with a pop-in animation)
+				for i = 1, 10 do
+					task.delay((i - 1) * POPUP_DELAY, function()
+						if not finalGui or not finalGui.Parent or hasFailed or hasWon then return end
+						
+						local chosenAsset = randomAssetList[math.random(1, #randomAssetList)]
+						local windowSize = getRandomWindowSize()
+						
+						local popWindow = Instance.new("Frame")
+						popWindow.Name = "VirusWindow_" .. i
+						popWindow.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
+						popWindow.BorderSizePixel = 0
+						popWindow.Size = UDim2.new(0, 0, 0, 0)
+						popWindow.AnchorPoint = Vector2.new(0.5, 0.5)
+						popWindow.Position = UDim2.new(math.random(10, 90)/100, 0, math.random(10, 90)/100, 0)
+						popWindow.ClipsDescendants = true
+						popWindow.ZIndex = 1
+						popWindow.Parent = finalGui
+						
+						local corner = Instance.new("UICorner")
+						corner.CornerRadius = UDim.new(0, 5)
+						corner.Parent = popWindow
+						
+						local innerContainer = Instance.new("Frame")
+						innerContainer.Name = "InnerContainer"
+						innerContainer.Size = UDim2.new(1, -4, 1, -4)
+						innerContainer.Position = UDim2.new(0, 2, 0, 2)
+						innerContainer.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+						innerContainer.BorderSizePixel = 0
+						innerContainer.Parent = popWindow
+						
+						local innerCorner = Instance.new("UICorner")
+						innerCorner.CornerRadius = UDim.new(0, 4)
+						innerCorner.Parent = innerContainer
+						
+						local headerBar = Instance.new("Frame")
+						headerBar.Name = "HeaderBar"
+						headerBar.Size = UDim2.new(1, 0, 0, 22)
+						headerBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+						headerBar.BackgroundTransparency = 0
+						headerBar.BorderSizePixel = 0
+						headerBar.Parent = innerContainer
+						
+						local headerCorner = Instance.new("UICorner")
+						headerCorner.CornerRadius = UDim.new(0, 4)
+						headerCorner.Parent = headerBar
+						
+						local headerText = Instance.new("TextLabel")
+						headerText.Name = "HeaderTitle"
+						headerText.Size = UDim2.new(1, -12, 1, 0)
+						headerText.Position = UDim2.new(0, 6, 0, 0)
+						headerText.BackgroundTransparency = 1
+						headerText.Text = titleOptions[math.random(1, #titleOptions)]
+						headerText.TextColor3 = Color3.fromRGB(20, 20, 20)
+						headerText.TextSize = 11
+						headerText.Font = Enum.Font.SourceSansBold
+						headerText.TextXAlignment = Enum.TextXAlignment.Left
+						headerText.Parent = headerBar
+						
+						local popImg = Instance.new("ImageLabel")
+						popImg.Name = "PopupImage"
+						popImg.Image = "rbxthumb://type=Asset&id=" .. chosenAsset .. "&w=420&h=420"
+						popImg.BackgroundTransparency = 1
+						popImg.Size = UDim2.new(1, 0, 1, -22)
+						popImg.Position = UDim2.new(0, 0, 0, 22)
+						popImg.Parent = innerContainer
+						
+						local popInfo = TweenInfo.new(POPUP_POP_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+						TweenService:Create(popWindow, popInfo, {Size = windowSize}):Play()
+						
+						table.insert(backgroundPopups, {
+							Object = popWindow,
+							BasePosition = popWindow.Position,
+							DespawnTimer = math.random(10, 12),
+							Elapsed = 0,
+							IsDespawning = false,
+							IsShaking = (math.random(1, 2) == 1)
+						})
+					end)
+				end
+				
+				--------------------------------------------------------------------
+				-- 2. MAIN WINDOW (R4NS0M)
+				--------------------------------------------------------------------
+				local mainWindow = Instance.new("Frame")
+				mainWindow.Name = "ShapeImage_MainContainer"
+				mainWindow.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
+				mainWindow.BorderSizePixel = 0
+				mainWindow.Size = UDim2.new(0, 450, 0, 292)
+				mainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
+				mainWindow.Position = UDim2.new(math.random(20, 80)/100, 0, math.random(20, 80)/100, 0)
+				mainWindow.ZIndex = 10
+				mainWindow.Parent = finalGui
+				
+				local mainCorner = Instance.new("UICorner")
+				mainCorner.CornerRadius = UDim.new(0, 5)
+				mainCorner.Parent = mainWindow
+				
+				local mainInner = Instance.new("Frame")
+				mainInner.Name = "InnerContainer"
+				mainInner.Size = UDim2.new(1, -4, 1, -4)
+				mainInner.Position = UDim2.new(0, 2, 0, 2)
+				mainInner.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+				mainInner.BorderSizePixel = 0
+				mainInner.Parent = mainWindow
+				
+				local mainInnerCorner = Instance.new("UICorner")
+				mainInnerCorner.CornerRadius = UDim.new(0, 4)
+				mainInnerCorner.Parent = mainInner
+				
+				local mainHeaderBar = Instance.new("Frame")
+				mainHeaderBar.Name = "HeaderBar"
+				mainHeaderBar.Size = UDim2.new(1, 0, 0, 22)
+				mainHeaderBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+				mainHeaderBar.BackgroundTransparency = 0
+				mainHeaderBar.BorderSizePixel = 0
+				mainHeaderBar.Parent = mainInner
+				
+				local mainHeaderCorner = Instance.new("UICorner")
+				mainHeaderCorner.CornerRadius = UDim.new(0, 4)
+				mainHeaderCorner.Parent = mainHeaderBar
+				
+				local mainHeaderText = Instance.new("TextLabel")
+				mainHeaderText.Name = "HeaderTitle"
+				mainHeaderText.Size = UDim2.new(1, -12, 1, 0)
+				mainHeaderText.Position = UDim2.new(0, 6, 0, 0)
+				mainHeaderText.BackgroundTransparency = 1
+				mainHeaderText.Text = "R4NS0M"
+				mainHeaderText.TextColor3 = Color3.fromRGB(20, 20, 20)
+				mainHeaderText.TextSize = 11
+				mainHeaderText.Font = Enum.Font.SourceSansBold
+				mainHeaderText.TextXAlignment = Enum.TextXAlignment.Left
+				mainHeaderText.Parent = mainHeaderBar
+				
+				local mainImage = Instance.new("ImageLabel")
+				mainImage.Name = "ShapeImage_Main"
+				mainImage.Image = "rbxthumb://type=Asset&id=133985779703515&w=420&h=420"
+				mainImage.BackgroundTransparency = 1
+				mainImage.Size = UDim2.new(1, 0, 1, -22)
+				mainImage.Position = UDim2.new(0, 0, 0, 22)
+				mainImage.Parent = mainInner
+				
+				local mainTargetPos = mainWindow.Position
+				local mainTpElapsed = 0
+				local mainTpInterval = math.random(3, 5)
+				
+				local container = Instance.new("Frame")
+				container.Name = "CoinTextContainer"
+				container.Size = UDim2.new(0, 140, 0, 45)
+				container.AnchorPoint = Vector2.new(0, 1)
+				container.Position = UDim2.new(0, 22, 1, -12)
+				container.BackgroundTransparency = 1
+				container.Parent = mainImage
+				
+				local listLayout = Instance.new("UIListLayout")
+				listLayout.FillDirection = Enum.FillDirection.Horizontal
+				listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+				listLayout.Padding = UDim.new(0, 4)
+				listLayout.Parent = container
+				
+				local displayCoins = 500.0
+				local targetCoins = 500
+				
+				local subText = Instance.new("TextLabel")
+				subText.Name = "BottomLeftText"
+				subText.Size = UDim2.new(0, 75, 0, 40)
+				subText.BackgroundTransparency = 1
+				subText.Text = tostring(targetCoins)
+				subText.TextColor3 = Color3.fromRGB(255, 255, 0)
+				subText.TextScaled = true
+				subText.TextXAlignment = Enum.TextXAlignment.Left
+				
+				local textFontSuccess, textFontResult = pcall(function()
+					return Enum.Font.Oswald
+				end)
+				subText.Font = textFontSuccess and textFontResult or Enum.Font.SourceSansBold
+				subText.Parent = container
+				
+				local coinImage = Instance.new("ImageLabel")
+				coinImage.Name = "CoinImage"
+				coinImage.Image = "rbxthumb://type=Asset&id=12771100802&w=150&h=150"
+				coinImage.BackgroundTransparency = 1
+				coinImage.Size = UDim2.new(0, 40, 0, 40)
+				coinImage.Parent = container
+				
+				local timerText = Instance.new("TextLabel")
+				timerText.Name = "TimerText"
+				timerText.Size = UDim2.new(0, 115, 0, 50)
+				timerText.AnchorPoint = Vector2.new(1, 1)
+				timerText.Position = UDim2.new(1, -35, 1, -12)
+				timerText.BackgroundTransparency = 1
+				timerText.TextColor3 = Color3.fromRGB(0, 0, 0)
+				timerText.TextScaled = true
+				timerText.TextXAlignment = Enum.TextXAlignment.Right
+				timerText.Font = subText.Font
+				timerText.Parent = mainImage
+				
+				local timeRemaining = 90.0
+				
+				local finalConn
+				finalConn = RunService.RenderStepped:Connect(function(dt)
+					if hasFailed or hasWon then return end
+					
+					-- WIN
+					if targetCoins <= 0 and not hasWon then
+						hasWon = true
+						if finalConn then finalConn:Disconnect() end
+						
+						clearRoundObjects()
+						
+						local vicSound = Instance.new("Sound")
+						vicSound.Name = "VictorySound"
+						vicSound.SoundId = "rbxassetid://127039883737564"
+						vicSound.Volume = 5
+						vicSound.Parent = SoundService
+						vicSound:Play()
+						
+						for _, popData in ipairs(backgroundPopups) do
+							if popData.Object and popData.Object.Parent then
+								popData.Object:Destroy()
+							end
+						end
+						
+						task.delay(0.4, function()
+							if finalGui then finalGui:Destroy() end
+							
+							local vicGui = Instance.new("ScreenGui")
+							vicGui.Name = "VictoryPopupGui"
+							vicGui.IgnoreGuiInset = true
+							vicGui.ResetOnSpawn = false
+							vicGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+							vicGui.Parent = playerGui
+							
+							local vicWindow = Instance.new("Frame")
+							vicWindow.Name = "VictoryWindow"
+							vicWindow.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
+							vicWindow.BorderSizePixel = 0
+							vicWindow.Size = UDim2.new(0, 450, 0, 292)
+							vicWindow.AnchorPoint = Vector2.new(0.5, 0.5)
+							vicWindow.Position = UDim2.new(0.5, 0, 0.5, 0)
+							vicWindow.ClipsDescendants = true
+							vicWindow.Parent = vicGui
+							
+							local vicCorner = Instance.new("UICorner")
+							vicCorner.CornerRadius = UDim.new(0, 5)
+							vicCorner.Parent = vicWindow
+							
+							local vicInner = Instance.new("Frame")
+							vicInner.Name = "InnerContainer"
+							vicInner.Size = UDim2.new(1, -4, 1, -4)
+							vicInner.Position = UDim2.new(0, 2, 0, 2)
+							vicInner.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+							vicInner.BorderSizePixel = 0
+							vicInner.Parent = vicWindow
+							
+							local vicInnerCorner = Instance.new("UICorner")
+							vicInnerCorner.CornerRadius = UDim.new(0, 4)
+							vicInnerCorner.Parent = vicInner
+							
+							local vicHeaderBar = Instance.new("Frame")
+							vicHeaderBar.Name = "HeaderBar"
+							vicHeaderBar.Size = UDim2.new(1, 0, 0, 22)
+							vicHeaderBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+							vicHeaderBar.BackgroundTransparency = 0
+							vicHeaderBar.BorderSizePixel = 0
+							vicHeaderBar.Parent = vicInner
+							
+							local vicHeaderCorner = Instance.new("UICorner")
+							vicHeaderCorner.CornerRadius = UDim.new(0, 4)
+							vicHeaderCorner.Parent = vicHeaderBar
+							
+							local vicHeaderText = Instance.new("TextLabel")
+							vicHeaderText.Name = "HeaderTitle"
+							vicHeaderText.Size = UDim2.new(1, -12, 1, 0)
+							vicHeaderText.Position = UDim2.new(0, 6, 0, 0)
+							vicHeaderText.BackgroundTransparency = 1
+							vicHeaderText.Text = "R4NS0M"
+							vicHeaderText.TextColor3 = Color3.fromRGB(20, 20, 20)
+							vicHeaderText.TextSize = 11
+							vicHeaderText.Font = Enum.Font.SourceSansBold
+							vicHeaderText.TextXAlignment = Enum.TextXAlignment.Left
+							vicHeaderText.Parent = vicHeaderBar
+							
+							local vicImage = Instance.new("ImageLabel")
+							vicImage.Name = "CenterVictoryImage"
+							vicImage.Image = "rbxthumb://type=Asset&id=134494788780774&w=420&h=420"
+							vicImage.BackgroundTransparency = 1
+							vicImage.Size = UDim2.new(1, 0, 1, -22)
+							vicImage.Position = UDim2.new(0, 0, 0, 22)
+							vicImage.Parent = vicInner
+							
+							task.delay(4.0, function()
+								if vicWindow and vicWindow.Parent then
+									local tweenInfo = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+									local shrinkTween = TweenService:Create(vicWindow, tweenInfo, {
+										Size = UDim2.new(0, 0, 0, 0),
+										BackgroundTransparency = 1
+									})
+									shrinkTween:Play()
+									shrinkTween.Completed:Connect(function()
+										vicGui:Destroy()
+										if vicSound then vicSound:Destroy() end
+									end)
+								end
+							end)
+						end)
+						return
+					end
+					
+					timeRemaining -= dt
+					local mins = math.floor(timeRemaining / 60)
+					local secs = math.floor(timeRemaining % 60)
+					timerText.Text = string.format("%d:%02d", mins, secs)
+					
+					-- FAIL
+					if timeRemaining <= 0 and not hasFailed then
+						hasFailed = true
+						if finalConn then finalConn:Disconnect() end
+						
+						clearRoundObjects()
+						if finalGui then finalGui:Destroy() end
+						
+						local failGui = Instance.new("ScreenGui")
+						failGui.Name = "FailureJumpscareGui"
+						failGui.IgnoreGuiInset = true
+						failGui.ResetOnSpawn = false
+						failGui.Parent = playerGui
+						
+						local failBg = Instance.new("Frame")
+						failBg.Size = UDim2.new(1, 0, 1, 0)
+						failBg.BackgroundColor3 = Color3.fromRGB(40, 0, 0)
+						failBg.BorderSizePixel = 0
+						failBg.Parent = failGui
+						
+						local failImage = Instance.new("ImageLabel")
+						failImage.Image = "rbxthumb://type=Asset&id=12436809176&w=420&h=420"
+						failImage.BackgroundTransparency = 1
+						failImage.Size = UDim2.new(0, 400, 0, 400)
+						failImage.AnchorPoint = Vector2.new(0.5, 0.5)
+						failImage.Position = UDim2.new(0.5, 0, 0.5, 0)
+						failImage.Parent = failBg
+						
+						local failElapsed = 0
+						local failImageOriginalPos = failImage.Position
+						local failConn
+						failConn = RunService.RenderStepped:Connect(function(fDt)
+							failElapsed += fDt
+							local sx = math.random(-8, 8)
+							local sy = math.random(-8, 8)
+							failImage.Position = failImageOriginalPos + UDim2.new(0, sx, 0, sy)
+							
+							if failElapsed >= 0.8 then
+								failConn:Disconnect()
+								if failGui then failGui:Destroy() end
+								
+								local char = player.Character
+								if char then
+									local humanoid = char:FindFirstChildOfClass("Humanoid")
+									if humanoid then
+										local damageAmount = humanoid.MaxHealth * 0.9
+										humanoid.Health = math.max(0, humanoid.Health - damageAmount)
+									end
+								end
+							end
+						end)
+						return
+					end
+					
+					mainTpElapsed += dt
+					mainWindow.Position = mainWindow.Position:Lerp(mainTargetPos, dt * 6)
+					
+					if mainTpElapsed >= mainTpInterval then
+						mainTpElapsed = 0
+						mainTpInterval = math.random(3, 5)
+						mainTargetPos = UDim2.new(math.random(15, 85)/100, 0, math.random(15, 85)/100, 0)
+					end
+					
+					local rx = math.random(-1, 1)
+					local ry = math.random(-1, 1)
+					mainWindow.Position = mainWindow.Position + UDim2.new(0, rx, 0, ry)
+					
+					-- Update pop-ups (Shake & Despawn checks)
+					for _, popData in ipairs(backgroundPopups) do
+						if popData.Object and popData.Object.Parent then
+							if not popData.IsDespawning then
+								popData.Elapsed += dt
+								
+								if popData.IsShaking then
+									local sx = math.random(-3, 3)
+									local sy = math.random(-3, 3)
+									popData.Object.Position = popData.BasePosition + UDim2.new(0, sx, 0, sy)
+								end
+								
+								if popData.Elapsed >= popData.DespawnTimer then
+									popData.IsDespawning = true
+									task.spawn(function()
+										local win = popData.Object
+										if not win or not win.Parent then return end
+										local info = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+										local shrink = TweenService:Create(win, info, {
+											Size = UDim2.new(0, 0, 0, 0),
+											BackgroundTransparency = 1
+										})
+										shrink:Play()
+										shrink.Completed:Connect(function()
+											if win then win:Destroy() end
+										end)
+									end)
+								end
+							end
+						end
+					end
+					
+					if displayCoins > targetCoins then
+						displayCoins = math.max(targetCoins, displayCoins - (dt * 120))
+						subText.Text = tostring(math.round(displayCoins))
+					elseif displayCoins < targetCoins then
+						displayCoins = math.min(targetCoins, displayCoins + (dt * 120))
+						subText.Text = tostring(math.round(displayCoins))
+					end
+				end)
+				
+				----------------------------------------------------------------
+				-- COIN REWARD (shared by coin pickups and the drawer):
+				-- coin bits fly to the R4NS0M window + the counter drops
+				----------------------------------------------------------------
+				local function playCollectSound()
+					local collectSound = Instance.new("Sound")
+					collectSound.SoundId = "rbxassetid://97921187742784"
+					collectSound.Volume = 3
+					collectSound.Parent = SoundService
+					collectSound:Play()
+					task.delay(2, function()
+						if collectSound then collectSound:Destroy() end
+					end)
+				end
+				
+				local function awardCoin(coinWorldPos)
+					task.spawn(function()
+						local particleGui = Instance.new("ScreenGui")
+						particleGui.IgnoreGuiInset = true
+						particleGui.Parent = playerGui
+						
+						local camera = Workspace.CurrentCamera
+						local vector, onScreen = camera:WorldToViewportPoint(coinWorldPos)
+						local startX = onScreen and vector.X or (camera.ViewportSize.X / 2)
+						local startY = onScreen and vector.Y or (camera.ViewportSize.Y / 2)
+						
+						local numBits = 8
+						local bits = {}
+						for b = 1, numBits do
+							local bit = Instance.new("ImageLabel")
+							bit.Image = "rbxthumb://type=Asset&id=12771100802&w=150&h=150"
+							bit.BackgroundTransparency = 1
+							bit.Size = UDim2.new(0, 12, 0, 12)
+							bit.Position = UDim2.new(0, startX, 0, startY)
+							bit.Parent = particleGui
+							
+							local scatterAngle = math.random() * math.pi * 2
+							local scatterDist = math.random(30, 70)
+							table.insert(bits, {
+								Object = bit,
+								PeakX = startX + math.cos(scatterAngle) * scatterDist,
+								PeakY = startY + math.sin(scatterAngle) * scatterDist,
+								StartX = startX,
+								StartY = startY
+							})
+						end
+						
+						local shatterDuration = 0.45
+						local sElapsed = 0
+						while sElapsed < shatterDuration do
+							local dt = RunService.RenderStepped:Wait()
+							sElapsed += dt
+							local alpha = math.clamp(sElapsed / shatterDuration, 0, 1)
+							local targetAbsPos = mainWindow.AbsolutePosition + (mainWindow.AbsoluteSize / 2)
+							
+							for _, data in ipairs(bits) do
+								if data.Object and data.Object.Parent then
+									local curX, curY
+									if alpha < 0.4 then
+										local subAlpha = alpha / 0.4
+										curX = data.StartX + (data.PeakX - data.StartX) * subAlpha
+										curY = data.StartY + (data.PeakY - data.StartY) * subAlpha
+									else
+										local subAlpha = (alpha - 0.4) / 0.6
+										curX = data.PeakX + (targetAbsPos.X - data.PeakX) * subAlpha
+										curY = data.PeakY + (targetAbsPos.Y - data.PeakY) * subAlpha
+									end
+									data.Object.Position = UDim2.new(0, curX, 0, curY)
+								end
+							end
+						end
+						particleGui:Destroy()
+					end)
+					
+					local deductions = {5, 10, 20, 50, 100}
+					local chosenDeduct = deductions[math.random(1, #deductions)]
+					if targetCoins > 0 then
+						targetCoins = math.max(0, targetCoins - chosenDeduct)
+						subText.TextSize = 35
+						task.spawn(function()
+							for sz = 35, 20, -2 do
+								subText.TextSize = sz
+								task.wait(0.015)
+							end
+						end)
+					end
+				end
+				
+				----------------------------------------------------------------
+				-- GROUND FINDER: only returns flat ground that is clear of walls/props
+				----------------------------------------------------------------
+				local function findGroundPosition(rootPart, character)
+					local rayParams = RaycastParams.new()
+					rayParams.FilterType = Enum.RaycastFilterType.Exclude
+					rayParams.IgnoreWater = true
+					rayParams.FilterDescendantsInstances = {character}
+					
+					local overlapParams = OverlapParams.new()
+					overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+					overlapParams.FilterDescendantsInstances = {character}
+					
+					local playerGroundY = rootPart.Position.Y - 3
+					
+					for _ = 1, 12 do
+						local angle = math.random() * math.pi * 2
+						local distance = math.random(15, 45)
+						local origin = Vector3.new(
+							rootPart.Position.X + math.cos(angle) * distance,
+							rootPart.Position.Y + 3,
+							rootPart.Position.Z + math.sin(angle) * distance
+						)
+						
+						local result = Workspace:Raycast(origin, Vector3.new(0, -30, 0), rayParams)
+						
+						if result and result.Normal.Y > 0.85 and math.abs(result.Position.Y - playerGroundY) <= 4 then
+							local blocked = false
+							local nearby = Workspace:GetPartBoundsInRadius(result.Position + Vector3.new(0, 1.6, 0), 1.1, overlapParams)
+							for _, p in ipairs(nearby) do
+								if p.CanCollide then
+									blocked = true
+									break
+								end
+							end
+							if not blocked then
+								return result.Position
+							end
+						end
+					end
+					
+					return nil
+				end
+				
+				----------------------------------------------------------------
+				-- Sits the model so its bottom touches the ground
+				----------------------------------------------------------------
+				local function placeModelOnGround(obj, groundPos)
+					obj:PivotTo(CFrame.new(groundPos) * COIN_ROTATION)
+					local bottomY
+					if obj:IsA("Model") then
+						local cf, size = obj:GetBoundingBox()
+						bottomY = cf.Position.Y - size.Y / 2
+					else
+						bottomY = obj.Position.Y - obj.Size.Y / 2
+					end
+					obj:PivotTo(obj:GetPivot() + Vector3.new(0, groundPos.Y - bottomY + COIN_HOVER, 0))
+				end
+				
+				-- Gives the player a fresh copy of the CD-1 tool
+				local function giveCDTool()
+					if not cdToolTemplate then return end
+					local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 3)
+					if backpack then
+						local tool = cdToolTemplate:Clone()
+						tool.Parent = backpack
+					end
+				end
+				
+				----------------------------------------------------------------
+				-- DRAWER: "Loot Drawer" prompt, gamble for a coin, prompt vanishes after one tap
+				----------------------------------------------------------------
+				local function spawnDrawer(groundPos, playerPos)
+					if not drawerTemplate then return false end
+					
+					local drawer = drawerTemplate:Clone()
+					drawer.Name = "R4NS0M_Drawer"
+					
+					local look = Vector3.new(playerPos.X - groundPos.X, 0, playerPos.Z - groundPos.Z)
+					local faceCF = CFrame.new(groundPos)
+					if look.Magnitude > 0.1 then
+						faceCF = CFrame.lookAt(groundPos, groundPos + look)
+					end
+					drawer:PivotTo(faceCF * DRAWER_ROTATION)
+					
+					local cf, size = drawer:GetBoundingBox()
+					drawer:PivotTo(drawer:GetPivot() + Vector3.new(0, groundPos.Y - (cf.Position.Y - size.Y / 2), 0))
+					cf, size = drawer:GetBoundingBox()
+					
+					-- Don't spawn inside walls / props
+					local overlapParams = OverlapParams.new()
+					overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+					overlapParams.FilterDescendantsInstances = {player.Character}
+					local boxSize = Vector3.new(math.max(size.X - 0.4, 0.2), math.max(size.Y - 0.7, 0.2), math.max(size.Z - 0.4, 0.2))
+					local touching = Workspace:GetPartBoundsInBox(cf * CFrame.new(0, 0.3, 0), boxSize, overlapParams)
+					for _, p in ipairs(touching) do
+						if p.CanCollide then
+							drawer:Destroy()
+							return false
+						end
+					end
+					
+					-- Biggest part holds the prompt
+					local main, bestVol = nil, -1
+					for _, d in ipairs(drawer:GetDescendants()) do
+						if d:IsA("BasePart") then
+							local v = d.Size.X * d.Size.Y * d.Size.Z
+							if v > bestVol then
+								bestVol = v
+								main = d
+							end
+						end
+					end
+					if not main then
+						drawer:Destroy()
+						return false
+					end
+					
+					local prompt = Instance.new("ProximityPrompt")
+					prompt.Name = "DrawerPrompt"
+					prompt.ObjectText = ""
+					prompt.ActionText = "Loot Drawer"
+					prompt.HoldDuration = 0
+					prompt.MaxActivationDistance = 8
+					prompt.RequiresLineOfSight = false
+					prompt.KeyboardKeyCode = Enum.KeyCode.E
+					prompt.Parent = main
+					
+					drawer.Parent = Workspace
+					
+					local used = false
+					prompt.Triggered:Connect(function(plr)
+						if plr ~= player or used then return end
+						used = true
+						prompt:Destroy() -- the option disappears after one tap
+						
+						if hasWon or hasFailed then return end
+						
+						if math.random() < DRAWER_COIN_CHANCE then
+							-- WIN the gamble: counts like picking up a coin
+							playCollectSound()
+							awardCoin(cf.Position)
+						else
+							-- LOSE the gamble: the drawer just rattles, nothing inside
+							task.spawn(function()
+								local base = drawer:GetPivot()
+								local t0 = os.clock()
+								while os.clock() - t0 < 0.35 and drawer.Parent do
+									drawer:PivotTo(base * CFrame.new((math.random() - 0.5) * 0.2, 0, (math.random() - 0.5) * 0.2))
+									RunService.Heartbeat:Wait()
+								end
+								if drawer.Parent then
+									drawer:PivotTo(base)
+								end
+							end)
+						end
+					end)
+					
+					print("[R4NS0M] A drawer spawned at " .. tostring(groundPos))
+					return true
+				end
+				
+				-- COIN / CD / TV / DRAWER SPAWNER
+				local function spawnDoorsCompatibleCoin()
+					task.spawn(function()
+						local character = player.Character or player.CharacterAdded:Wait()
+						local rootPart = character:WaitForChild("HumanoidRootPart", 5)
+						if not rootPart then return end
+						
+						local groundPos = findGroundPosition(rootPart, character)
+						if not groundPos then return end
+						
+						-- TV roll (only ONE TV ever spawns)
+						if not tvSpawned and tvTemplate ~= nil and math.random() < TV_CHANCE then
+							tvSpawned = true
+							spawnTV(groundPos, rootPart.Position)
+							return
+						end
+						
+						-- Drawer roll (10% chance, spawns instead of a coin this cycle)
+						if drawerTemplate ~= nil and math.random() < DRAWER_CHANCE then
+							if spawnDrawer(groundPos, rootPart.Position) then
+								return
+							end
+						end
+						
+						-- CD roll (only ONE CD ever spawns)
+						local isCD = false
+						if not cdSpawned and cdToolTemplate ~= nil and math.random() < CD_CHANCE then
+							cdSpawned = true
+							isCD = true
+							print("[R4NS0M] A CD-1 spawned at " .. tostring(groundPos))
+						end
+						
+						local coinObj
+						if isCD then
+							coinObj = makeCDDisplay()
+							placeModelOnGround(coinObj, groundPos)
+							coinObj.Parent = Workspace
+						elseif coinTemplate then
+							coinObj = coinTemplate:Clone()
+							coinObj.Name = "MapCollectibleCoin"
+							
+							if COIN_SCALE ~= 1 then
+								if coinObj:IsA("Model") then
+									pcall(function()
+										coinObj:ScaleTo(COIN_SCALE)
+									end)
+								elseif coinObj:IsA("BasePart") then
+									coinObj.Size = coinObj.Size * COIN_SCALE
+								end
+							end
+							
+							placeModelOnGround(coinObj, groundPos)
+							coinObj.Parent = Workspace
+						else
+							coinObj = Instance.new("Part")
+							coinObj.Name = "MapCollectibleCoin"
+							coinObj.Shape = Enum.PartType.Cylinder
+							coinObj.Size = Vector3.new(0.4, 2.0, 2.0)
+							coinObj.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.2 + COIN_HOVER, 0)) * CFrame.Angles(0, 0, math.rad(90))
+							coinObj.Anchored = true
+							coinObj.CanCollide = false
+							coinObj.Material = Enum.Material.Neon
+							coinObj.Color = Color3.fromRGB(255, 215, 0)
+							coinObj.Parent = Workspace
+						end
+						
+						local collected = false
+						local checkConn
+						checkConn = RunService.RenderStepped:Connect(function()
+							if collected or not coinObj.Parent or hasFailed or hasWon then
+								if checkConn then checkConn:Disconnect() end
+								return
+							end
+							
+							local char = player.Character
+							local hrp = char and char:FindFirstChild("HumanoidRootPart")
+							if hrp then
+								local coinPos = coinObj:GetPivot().Position
+								local flatDist = Vector3.new(hrp.Position.X - coinPos.X, 0, hrp.Position.Z - coinPos.Z).Magnitude
+								local heightDiff = math.abs(hrp.Position.Y - coinPos.Y)
+								
+								if flatDist < 4.0 and heightDiff < 6 then
+									collected = true
+									checkConn:Disconnect()
+									
+									local coinWorldPos = coinPos
+									coinObj:Destroy()
+									
+									playCollectSound()
+									
+									-- CD PICKUP: goes to your inventory, doesn't change the coin counter
+									if isCD then
+										giveCDTool()
+										return
+									end
+									
+									-- NORMAL COIN PICKUP
+									awardCoin(coinWorldPos)
+								end
+							end
+						end)
+					end)
+				end
+				
+				task.spawn(function()
+					while finalGui and finalGui.Parent and not hasFailed and not hasWon do
+						spawnDoorsCompatibleCoin()
+						task.wait(1.2)
+					end
+				end)
+				
+				return
+			end
+			
+			local shakeX = math.random(-6, 6)
+			local shakeY = math.random(-6, 6)
+			textLabel.Position = originalTextPos + UDim2.new(0, shakeX, 0, shakeY)
+			barContainer.Position = originalBarPos + UDim2.new(0, shakeX, 0, shakeY)
+			
+			local dotCycle = math.floor(phase2Elapsed * 6) % 3
+			if dotCycle == 0 then
+				textLabel.Text = "Downloading."
+			elseif dotCycle == 1 then
+				textLabel.Text = "Downloading.."
+			else
+				textLabel.Text = "Downloading..."
+			end
+			
+			if math.floor(phase2Elapsed * 15) % 2 == 0 then
+				textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			else
+				textLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+			end
+		end)
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- TIMELINE CONTROLLER FOR PRE-PHASE
+--------------------------------------------------------------------------------
+task.spawn(function()
+	task.wait(0.8)
+	if mainSequenceTriggered then return end
+	
+	preBg.BackgroundTransparency = 0
+	previewImage.AnchorPoint = Vector2.new(0.5, 0.5)
+	previewImage.Position = UDim2.new(0.5, 0, 0.5, 0)
+	previewImage.Size = UDim2.new(0, 250, 0, 250)
+	
+	local checkElapsed = 0
+	local checkInterval = 2.0
+	
+	local character = player.Character or player.CharacterAdded:Wait()
+	local humanoid = character:WaitForChild("Humanoid", 5)
+	
+	local waitConn
+	waitConn = RunService.RenderStepped:Connect(function(dt)
+		checkElapsed += dt
+		
+		local isMoving = false
+		if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+			isMoving = true
+		elseif UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Up) or UserInputService:IsKeyDown(Enum.KeyCode.Down) or UserInputService:IsKeyDown(Enum.KeyCode.Left) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+			isMoving = true
+		end
+		
+		if isMoving then
+			waitConn:Disconnect()
+			startMainSequence()
+			return
+		end
+		
+		if checkElapsed >= checkInterval then
+			waitConn:Disconnect()
+			if preGui then
+				preGui:Destroy()
+			end
+			if spawnSound then
+				spawnSound:Destroy()
+			end
+			return
+		end
+	end)
+end)
