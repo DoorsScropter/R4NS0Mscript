@@ -33,14 +33,14 @@ local CD_SCALE = 0.4 -- size of the CD (on the ground AND in your hand). 1 = ori
 local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used if the model isn't already a Tool)
 
 -- CRUCIFIX SETTINGS
-local CRUCIFIX_ASSET_ID = 12699076186 -- the pickup / tool model
+local CRUCIFIX_ASSET_ID = 11650774915 -- the pickup / tool model
 local CRUCIFIX_CHANCE = 0.03 -- 3% chance per spawn cycle
 local CRUCIFIX_MAX_SPAWNS = 1 -- how many crucifixes can spawn per run (raise it if you want more)
 local CRUCIFIX_TOOL_NAME = "Crucifix"
 local CRUCIFIX_SCALE = CD_SCALE -- same size as the CD
 local CRUCIFIX_GRIP = CFrame.new(0, 0, 0) -- how it sits in your hand. If it isn't straight, try CFrame.Angles(math.rad(90), 0, 0) / (0, 0, math.rad(90)) / (math.rad(-90), 0, 0)
 local CRUCIFIX_CONSUMED = true -- true = the crucifix is used up when you use it on R4NS0M
-local CRUCIFIX_CROSS_ASSET_ID = 12526928146 -- the big cross that appears on the ground
+local CRUCIFIX_CROSS_ASSET_ID = 12570023741 -- the big cross that appears on the ground
 local CRUCIFIX_CROSS_DISTANCE = 5 -- studs in front of you
 local CRUCIFIX_CROSS_ROTATION = CFrame.Angles(0, 0, 0) -- if the big cross faces the wrong way, try (0, math.rad(90), 0) / (0, math.rad(180), 0)
 local CRUCIFIX_IMAGE_ID = 12436809176 -- image in the middle of the cross
