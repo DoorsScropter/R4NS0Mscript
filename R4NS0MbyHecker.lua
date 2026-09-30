@@ -17,7 +17,7 @@ local THEME_SOUND_ID = 135885597215283 -- theme song (only plays while the R4NS0
 local THEME_SPEED = 0.1 -- starting speed (it is auto-corrected once the length is known)
 local THEME_TARGET_SECONDS = 90 -- the theme is stretched / squeezed to last exactly this long (1:30)
 local THEME_VOLUME = 10 -- loud
-local THEME_EXTEND_JUMPSCARE = true -- true = after the jumpscare audio ends, the FIRST HALF of the theme is cloned in to extend the music
+local THEME_EXTEND_JUMPSCARE = false -- true = after the jumpscare audio ends, the FIRST HALF of the theme is cloned in to extend the music
 
 -- COIN MODEL SETTINGS
 local COIN_ASSET_ID = 130662993839681
