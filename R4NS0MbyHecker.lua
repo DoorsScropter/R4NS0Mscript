@@ -9,6 +9,13 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
 local playerGui = player:WaitForChild("PlayerGui")
 
+-- SOUND SETTINGS
+local JUMPSCARE_SOUND_ID = 80491955969050 -- phase 1 + 2 jumpscare / downloading sound
+local VICTORY_SOUND_ID = 124923188934894 -- victory pop-up sound
+local THEME_SOUND_ID = 135885597215283 -- theme song (only plays while the R4NS0M window is on screen)
+local THEME_SPEED = 0.1 -- playback speed of the theme (0.1 = very slow and deep)
+local THEME_VOLUME = 10 -- loud
+
 -- COIN MODEL SETTINGS
 local COIN_ASSET_ID = 130662993839681
 local COIN_SCALE = 1 -- make bigger/smaller (example: 1.5 or 0.7)
@@ -36,6 +43,15 @@ local TV_DISC_SOUND_VOLUME = 5
 local TV_DISC_SOUND_MAX_WAIT = 4 -- the evil clone never waits longer than this for the audio (seconds)
 local TV_STAY_WHITE = false -- false = TV goes back to normal after the clone is out, true = stays white
 local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
+
+-- TV DISC GLOW / PARTICLES / IMAGE SETTINGS
+local TV_GLOW_COLOR = Color3.fromRGB(255, 110, 110) -- light red glow
+local TV_GLOW_LIGHT_COLOR = Color3.fromRGB(255, 60, 60)
+local TV_GLOW_BRIGHTNESS = 10 -- how bright the red light around the TV is
+local TV_GLOW_RANGE = 40
+local TV_CENTER_IMAGE_ID = 12436809176 -- image in the center of the TV (appears when the audio starts)
+local TV_CENTER_IMAGE_SIZE = 0.8 -- image size compared to the TV (1 = as big as the TV)
+local TV_GLOW_STAY_AFTER = false -- false = glow / particles / image go away when the evil clone spawns, true = they stay
 
 -- CLONE SETTINGS
 local CLONE_SPEED = 12 -- normal clone speed (your walk speed is 16)
@@ -87,6 +103,9 @@ if SoundService:FindFirstChild("VictorySound") then
 end
 if SoundService:FindFirstChild("TVDiscSound") then
 	SoundService.TVDiscSound:Destroy()
+end
+if SoundService:FindFirstChild("R4NS0MTheme") then
+	SoundService.R4NS0MTheme:Destroy()
 end
 
 -- Cleanup old spawned map coins / CDs / TV / drawers / clones from a previous run
@@ -335,7 +354,7 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- HELPERS: tint the TV (white flash) and kill the player
+-- HELPERS: tint the TV (white flash / red glow) and kill the player
 --------------------------------------------------------------------------------
 local function tintModel(model, color)
 	local undo = {}
@@ -781,7 +800,7 @@ local function runCloneEntity(evil, tvModel, tvGroundY, onEmerged, onGone)
 end
 
 --------------------------------------------------------------------------------
--- TV SETUP (prompt, static sound, open / insert disc / rewind)
+-- TV SETUP (prompt, static sound, open / insert disc / rewind, red glow + particles + image)
 --------------------------------------------------------------------------------
 local function setupTV(tv, groundY)
 	-- Biggest part holds the prompt and the sound
@@ -881,6 +900,104 @@ local function setupTV(tv, groundY)
 		setStatic(TV_IDLE_STATIC_VOLUME)
 	end
 	
+	----------------------------------------------------------------
+	-- RED GLOW + PARTICLES (start when the TV starts shaking)
+	-- + CENTER IMAGE (appears when the audio starts)
+	----------------------------------------------------------------
+	local glowRestore = nil
+	local glowCenter = nil
+	local glowEmitter = nil
+	local glowLight = nil
+	local glowBillboard = nil
+	local glowSize = Vector3.new(4, 4, 4)
+	
+	local function startGlow()
+		if glowCenter then return end
+		doRestoreTV() -- drop the white tint if it's still on
+		glowRestore = tintModel(tv, TV_GLOW_COLOR)
+		
+		local cf, size = tv:GetBoundingBox()
+		glowSize = size
+		
+		-- invisible part in the exact center of the TV (moves with the TV while it shakes)
+		glowCenter = Instance.new("Part")
+		glowCenter.Name = "TVCenter"
+		glowCenter.Size = Vector3.new(0.3, 0.3, 0.3)
+		glowCenter.Transparency = 1
+		glowCenter.Anchored = true
+		glowCenter.CanCollide = false
+		glowCenter.CanTouch = false
+		glowCenter.CanQuery = false
+		glowCenter.CFrame = cf
+		glowCenter.Parent = tv
+		
+		-- very bright red light
+		glowLight = Instance.new("PointLight")
+		glowLight.Color = TV_GLOW_LIGHT_COLOR
+		glowLight.Brightness = TV_GLOW_BRIGHTNESS
+		glowLight.Range = TV_GLOW_RANGE
+		glowLight.Shadows = false
+		glowLight.Parent = glowCenter
+		
+		-- particles coming out of the center of the TV
+		glowEmitter = Instance.new("ParticleEmitter")
+		glowEmitter.Name = "TVParticles"
+		glowEmitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		glowEmitter.Color = ColorSequence.new(Color3.fromRGB(255, 70, 70), Color3.fromRGB(255, 190, 190))
+		glowEmitter.LightEmission = 1
+		glowEmitter.LightInfluence = 0
+		glowEmitter.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.6),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		glowEmitter.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		glowEmitter.Lifetime = NumberRange.new(0.8, 1.6)
+		glowEmitter.Rate = 60
+		glowEmitter.Speed = NumberRange.new(4, 10)
+		glowEmitter.SpreadAngle = Vector2.new(180, 180)
+		glowEmitter.RotSpeed = NumberRange.new(-90, 90)
+		glowEmitter.Parent = glowCenter
+	end
+	
+	local function showCenterImage()
+		if not glowCenter or glowBillboard then return end
+		local s = math.max(glowSize.X, glowSize.Y) * TV_CENTER_IMAGE_SIZE
+		
+		glowBillboard = Instance.new("BillboardGui")
+		glowBillboard.Name = "TVCenterImage"
+		glowBillboard.Adornee = glowCenter
+		glowBillboard.AlwaysOnTop = true
+		glowBillboard.LightInfluence = 0
+		glowBillboard.Size = UDim2.new(s, 0, s, 0)
+		glowBillboard.Parent = glowCenter
+		
+		local img = Instance.new("ImageLabel")
+		img.BackgroundTransparency = 1
+		img.AnchorPoint = Vector2.new(0.5, 0.5)
+		img.Position = UDim2.new(0.5, 0, 0.5, 0)
+		img.Size = UDim2.new(1, 0, 1, 0)
+		img.Image = "rbxthumb://type=Asset&id=" .. tostring(TV_CENTER_IMAGE_ID) .. "&w=420&h=420"
+		img.Parent = glowBillboard
+	end
+	
+	local function stopGlow()
+		if glowEmitter then
+			glowEmitter.Enabled = false
+		end
+		if glowRestore then
+			local r = glowRestore
+			glowRestore = nil
+			r()
+		end
+		if glowCenter then
+			glowCenter:Destroy()
+		end
+		glowCenter, glowEmitter, glowLight, glowBillboard = nil, nil, nil, nil
+	end
+	
 	-- Plays the disc audio and waits for it to finish (never longer than TV_DISC_SOUND_MAX_WAIT)
 	local function playDiscAudio()
 		local discSound = Instance.new("Sound")
@@ -906,7 +1023,8 @@ local function setupTV(tv, groundY)
 		discSound:Destroy()
 	end
 	
-	-- INSERT DISC: TV shakes 7s (normal clone rewinds into the TV if it's out), audio plays, then the EVIL clone comes out
+	-- INSERT DISC: TV shakes 7s + glows red with particles (normal clone rewinds into the TV if it's out),
+	-- then the audio plays with the image in the center, then the EVIL clone comes out
 	local function insertDisc(cdTool, ctl)
 		phase = "busy"
 		if CD_CONSUMED then
@@ -914,6 +1032,7 @@ local function setupTV(tv, groundY)
 		end
 		task.spawn(function()
 			setStatic(TV_ACTIVE_STATIC_VOLUME)
+			startGlow()
 			
 			local rewound = true
 			if ctl then
@@ -947,17 +1066,26 @@ local function setupTV(tv, groundY)
 				RunService.Heartbeat:Wait()
 			end
 			
-			doRestoreTV()
-			
-			-- Shake is over: static cuts out, the audio plays, THEN the evil clone spawns
+			-- Shake is over: static cuts out, the image shows in the center, the audio plays
 			setStatic(0)
+			showCenterImage()
 			playDiscAudio()
 			
 			if not tv.Parent then
 				cycleDone()
 				return
 			end
-			runCloneEntity(true, tv, groundY, nil, cycleDone)
+			
+			-- Audio finished: the evil clone comes out (glow + particles + image go away unless TV_GLOW_STAY_AFTER)
+			if not TV_GLOW_STAY_AFTER then
+				stopGlow()
+			end
+			runCloneEntity(true, tv, groundY, nil, function()
+				if TV_GLOW_STAY_AFTER then
+					stopGlow()
+				end
+				cycleDone()
+			end)
 		end)
 	end
 	
@@ -1063,7 +1191,7 @@ local function startMainSequence()
 	
 	local sound = Instance.new("Sound")
 	sound.Name = "JumpscareSound"
-	sound.SoundId = "rbxassetid://124085357123084"
+	sound.SoundId = "rbxassetid://" .. tostring(JUMPSCARE_SOUND_ID)
 	sound.Volume = 10
 	sound.PlaybackSpeed = 1.0
 	sound.Parent = SoundService
@@ -1229,6 +1357,24 @@ local function startMainSequence()
 				finalGui.ResetOnSpawn = false
 				finalGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 				finalGui.Parent = playerGui
+				
+				-- THEME SONG: only plays while the R4NS0M window is on screen
+				local themeSound = Instance.new("Sound")
+				themeSound.Name = "R4NS0MTheme"
+				themeSound.SoundId = "rbxassetid://" .. tostring(THEME_SOUND_ID)
+				themeSound.Volume = THEME_VOLUME
+				themeSound.PlaybackSpeed = THEME_SPEED
+				themeSound.Looped = true
+				themeSound.Parent = SoundService
+				themeSound:Play()
+				
+				local function stopTheme()
+					if themeSound then
+						themeSound:Stop()
+						themeSound:Destroy()
+						themeSound = nil
+					end
+				end
 				
 				local backgroundPopups = {}
 				
@@ -1472,11 +1618,12 @@ local function startMainSequence()
 						hasWon = true
 						if finalConn then finalConn:Disconnect() end
 						
+						stopTheme() -- the R4NS0M window is going away
 						clearRoundObjects()
 						
 						local vicSound = Instance.new("Sound")
 						vicSound.Name = "VictorySound"
-						vicSound.SoundId = "rbxassetid://127039883737564"
+						vicSound.SoundId = "rbxassetid://" .. tostring(VICTORY_SOUND_ID)
 						vicSound.Volume = 5
 						vicSound.Parent = SoundService
 						vicSound:Play()
@@ -1583,6 +1730,7 @@ local function startMainSequence()
 						hasFailed = true
 						if finalConn then finalConn:Disconnect() end
 						
+						stopTheme() -- the R4NS0M window is going away
 						clearRoundObjects()
 						if finalGui then finalGui:Destroy() end
 						
