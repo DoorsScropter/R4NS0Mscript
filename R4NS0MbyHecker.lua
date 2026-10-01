@@ -68,7 +68,7 @@ local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
 -- "OPEN TV?" SETTINGS
 local TV_OPEN_DELAY = 5 -- seconds the TV screen glows white (with static) before the clone appears
 local TV_OPEN_LIGHT_COLOR = Color3.fromRGB(255, 255, 255)
-local TV_OPEN_LIGHT_BRIGHTNESS = 1
+local TV_OPEN_LIGHT_BRIGHTNESS = 10
 local TV_OPEN_LIGHT_RANGE = 5
 
 -- "INSERT DISC?" SETTINGS
@@ -77,14 +77,14 @@ local TV_INSERT_SOUND_1_TIME = 1
 local TV_INSERT_SOUND_2 = 926658585 -- plays for 7 seconds straight (the TV shakes during this)
 local TV_SHAKE_TIME = 7
 local TV_INSERT_SOUND_3 = 84909470598244 -- plays after that, the image shows and shakes during it
-local TV_INSERT_SOUND_3_MAX_WAIT = 12 -- never waits longer than this for sound 3 to end
+local TV_INSERT_SOUND_3_MAX_WAIT = 10 -- never waits longer than this for sound 3 to end
 local TV_INSERT_SOUND_VOLUME = 5
 local TV_EVIL_DELAY = 1 -- seconds after sound 3 ends before the evil clone comes out
 
 -- TV DISC GLOW / PARTICLES / IMAGE SETTINGS
 local TV_GLOW_COLOR = Color3.fromRGB(255, 110, 110) -- light red glow
 local TV_GLOW_LIGHT_COLOR = Color3.fromRGB(255, 60, 60)
-local TV_GLOW_BRIGHTNESS = 1 -- how bright the red light around the TV is
+local TV_GLOW_BRIGHTNESS = 10 -- how bright the red light around the TV is
 local TV_GLOW_RANGE = 5
 local TV_CENTER_IMAGE_ID = 12436809176 -- image in the center of the TV (shakes like the TV is corrupted)
 local TV_CENTER_IMAGE_SIZE = 0.8 -- image size compared to the TV (1 = as big as the TV)
@@ -92,7 +92,7 @@ local TV_GLOW_STAY_AFTER = false -- false = glow / particles / image go away whe
 
 -- CLONE SETTINGS
 local CLONE_SPEED = 12 -- normal clone speed (your walk speed is 16)
-local EVIL_CLONE_SPEED = 16 -- evil clone speed
+local EVIL_CLONE_SPEED = 17 -- evil clone speed
 local EVIL_STOP_EVERY = 2 -- evil clone stops every X seconds
 local EVIL_STOP_TIME = 0.5 -- and stays still for this long
 local CLONE_EMERGE_TIME = 1.6 -- how long it takes to come out of the TV
