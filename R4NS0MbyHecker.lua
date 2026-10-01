@@ -19,6 +19,18 @@ local THEME_TARGET_SECONDS = 90 -- the theme is stretched / squeezed to last exa
 local THEME_VOLUME = 10 -- loud
 local THEME_EXTEND_JUMPSCARE = false -- true = after the jumpscare audio ends, the FIRST HALF of the theme is cloned in to extend the music
 
+-- "STAND STILL" WARNING (the corner image -> center images, before the jumpscare)
+local PRE_IMAGE_A = 12350997710 -- shows in the top-left corner, then comes back to the center
+local PRE_IMAGE_B = 12440673966 -- the quick flash in the center
+local PRE_CORNER_TIME = 0.5 -- seconds the image stays in the corner
+local PRE_FLASH_TIME = 0.4 -- seconds the flash image + dark red bg stay in the center
+local PRE_GAP_TIME = 0.4 -- seconds of nothing between the flash and the final stare
+local PRE_STARE_TIME = 0.7 -- seconds the final image stays in the center (with the flickering bg)
+local PRE_CORNER_SIZE = 300 -- size of the corner image (pixels)
+local PRE_CENTER_SIZE = 420 -- size of the center images (pixels)
+local PRE_FLICKER_SPEED = 0.06 -- how fast the dark red bg flickers during the final stare
+local PRE_DETECT_IN_FLASH = false -- false = moving only counts during the final stare (when he is at the center), true = also counts during the flash
+
 -- COIN MODEL SETTINGS
 local COIN_ASSET_ID = 130662993839681
 local COIN_SCALE = 1 -- make bigger/smaller (example: 1.5 or 0.7)
@@ -28,7 +40,7 @@ local PICKUP_DISTANCE = 10 -- how close you must be to see the "Collect Coins" /
 
 -- CD-1 TOOL SETTINGS
 local CD_ASSET_ID = 116084743176043
-local CD_CHANCE = 0.03 -- 1% chance per spawn (only ONE CD ever spawns per run)
+local CD_CHANCE = 0.03 -- chance per spawn (only ONE CD ever spawns per run)
 local CD_TOOL_NAME = "CD-1"
 local CD_SCALE = 0.4 -- size of the CD (on the ground AND in your hand). 1 = original size
 local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used if the model isn't already a Tool)
@@ -56,14 +68,21 @@ local CRUCIFIX_SOUND_ID_2 = 115833319186798
 local CRUCIFIX_SOUND_VOLUME = 6
 
 -- TV SETTINGS
-local TV_ASSET_ID = 17307663311 -- new TV model
-local TV_CHANCE = 0.03 -- 1% chance per spawn (only ONE TV ever spawns per run)
+local TV_ASSET_ID = 17307663311 -- TV model
+local TV_SCALE = 2.5 -- HOW BIG THE TV IS (1 = original size, 2 = twice as big, 3 = three times as big...)
+local TV_CHANCE = 0.03 -- chance per spawn (only ONE TV ever spawns per run)
 local TV_ROTATION = CFrame.Angles(0, 0, 0) -- if the TV faces the wrong way, try CFrame.Angles(0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
 local TV_STATIC_SOUND_ID = 138347177735590
 local TV_IDLE_STATIC_VOLUME = 0 -- quiet static while the TV just stands there (0 = silent)
 local TV_ACTIVE_STATIC_VOLUME = 3 -- static volume while opening / shaking
 local TV_STAY_WHITE = false -- false = TV goes back to normal after the clone is out, true = stays white
 local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
+
+-- TV PUSHING (touch the side of the TV, you stick to it, walk and it moves with you, jump to let go)
+local TV_PUSH_ENABLED = true
+local TV_PUSH_AXIS = "X" -- "X" = you grab it from the left / right sides of the model. If the sides are wrong, use "Z" (front / back) or change TV_ROTATION
+local TV_PUSH_TOUCH_DISTANCE = 2.5 -- how close you must be to the side (and walking into it) to stick
+local TV_PUSH_STICK_GAP = 1.6 -- how far from the TV's side you are held while you move it
 
 -- "OPEN TV?" SETTINGS
 local TV_OPEN_DELAY = 5 -- seconds the TV screen glows white (with static) before the clone appears
@@ -81,7 +100,7 @@ local TV_INSERT_SOUND_3_MAX_WAIT = 10 -- never waits longer than this for sound 
 local TV_INSERT_SOUND_VOLUME = 5
 local TV_EVIL_DELAY = 1 -- seconds after sound 3 ends before the evil clone comes out
 
--- TV DISC GLOW / PARTICLES / IMAGE SETTINGS
+-- TV DISC GLOW / PARTICLES / IMAGE SETTINGS (only the TV SCREEN glows, like when the normal clone comes out)
 local TV_GLOW_COLOR = Color3.fromRGB(255, 110, 110) -- light red glow
 local TV_GLOW_LIGHT_COLOR = Color3.fromRGB(255, 60, 60)
 local TV_GLOW_BRIGHTNESS = 10 -- how bright the red light around the TV is
@@ -916,7 +935,7 @@ local function runCloneEntity(evil, tvModel, tvGroundY, onEmerged, onGone)
 		local toP = Vector3.new(pHrp.Position.X - cPos.X, 0, pHrp.Position.Z - cPos.Z)
 		local flatDist = toP.Magnitude
 		
-		-- Evil clone: moves for 5s, stops for 0.5s
+		-- Evil clone: moves for a while, then stops for a moment
 		if evil then
 			phaseTimer += dt
 			if not stopped and phaseTimer >= EVIL_STOP_EVERY then
@@ -977,7 +996,7 @@ local function runCloneEntity(evil, tvModel, tvGroundY, onEmerged, onGone)
 end
 
 --------------------------------------------------------------------------------
--- TV SETUP (prompt, static sound, open / insert disc / rewind, red glow + particles + image)
+-- TV SETUP (prompt, static sound, open / insert disc / rewind, red screen glow + particles + image, pushing)
 --------------------------------------------------------------------------------
 local function setupTV(tv, groundY)
 	-- Biggest part holds the prompt and the sound
@@ -1072,6 +1091,7 @@ local function setupTV(tv, groundY)
 	
 	----------------------------------------------------------------
 	-- RED GLOW + PARTICLES (start when you insert the disc)
+	-- Only the TV SCREEN glows red (like the white screen glow when the normal clone comes out), not the whole TV
 	-- + CENTER IMAGE (appears with sound 3, shakes like the TV is corrupted)
 	----------------------------------------------------------------
 	local glowRestore = nil
@@ -1083,8 +1103,12 @@ local function setupTV(tv, groundY)
 	
 	local function startGlow()
 		if glowCenter then return end
-		doRestoreTV() -- drop the white glow if it's still on
-		glowRestore = tintModel(tv, TV_GLOW_COLOR)
+		doRestoreTV() -- drop the white screen glow if it's still on
+		
+		-- only the screen of the TV turns red + neon
+		if screenPart then
+			glowRestore = tintModel(screenPart, TV_GLOW_COLOR)
+		end
 		
 		local cf, size = tv:GetBoundingBox()
 		glowSize = size
@@ -1101,13 +1125,13 @@ local function setupTV(tv, groundY)
 		glowCenter.CFrame = cf
 		glowCenter.Parent = tv
 		
-		-- very bright red light
+		-- red light that comes from the screen (the same way the white light does when you open the TV)
 		glowLight = Instance.new("PointLight")
 		glowLight.Color = TV_GLOW_LIGHT_COLOR
 		glowLight.Brightness = TV_GLOW_BRIGHTNESS
 		glowLight.Range = TV_GLOW_RANGE
 		glowLight.Shadows = false
-		glowLight.Parent = glowCenter
+		glowLight.Parent = screenPart or glowCenter
 		
 		-- particles coming out of the center of the TV
 		glowEmitter = Instance.new("ParticleEmitter")
@@ -1173,6 +1197,9 @@ local function setupTV(tv, groundY)
 			glowRestore = nil
 			r()
 		end
+		if glowLight then
+			glowLight:Destroy()
+		end
 		if glowCenter then
 			glowCenter:Destroy()
 		end
@@ -1181,7 +1208,7 @@ local function setupTV(tv, groundY)
 	
 	-- INSERT DISC:
 	--   sound 1 plays 1s -> sound 2 plays 7s while the TV shakes (normal clone rewinds into the TV if it's out)
-	--   -> sound 3 plays with the shaking image -> 3s after it ends the EVIL clone comes out (TV standing still)
+	--   -> sound 3 plays with the shaking image -> after it ends the EVIL clone comes out (TV standing still)
 	local function insertDisc(cdTool, ctl)
 		phase = "busy"
 		if CD_CONSUMED then
@@ -1240,7 +1267,7 @@ local function setupTV(tv, groundY)
 				return
 			end
 			
-			-- 4) 3 seconds after the sound ends, the evil clone comes out
+			-- 4) a moment after the sound ends, the evil clone comes out
 			task.wait(TV_EVIL_DELAY)
 			if not tv.Parent then
 				cycleDone()
@@ -1259,7 +1286,7 @@ local function setupTV(tv, groundY)
 		end)
 	end
 	
-	-- OPEN TV: the screen turns on (white glow + white light + static) for 5 seconds, then a clone of you comes out
+	-- OPEN TV: the screen turns on (white glow + white light + static) for a few seconds, then a clone of you comes out
 	local function openTV()
 		phase = "busy"
 		task.spawn(function()
@@ -1324,6 +1351,199 @@ local function setupTV(tv, groundY)
 			insertDisc(cdTool, normalCtl)
 		end
 	end)
+	
+	----------------------------------------------------------------
+	-- PUSHING THE TV
+	--   walk into the side of the TV -> you stick to it
+	--   walk around -> the TV moves with you (left on the thumbstick = TV goes left too)
+	--   jump -> you let go, the TV is unpushable again until you leave the side and come back to it
+	----------------------------------------------------------------
+	if TV_PUSH_ENABLED then
+		-- size of the TV in its own space (so "sides" are always the model's left / right)
+		local pivot0 = tv:GetPivot()
+		local extMin = Vector3.new(math.huge, math.huge, math.huge)
+		local extMax = Vector3.new(-math.huge, -math.huge, -math.huge)
+		local tvParts = {}
+		for _, d in ipairs(tv:GetDescendants()) do
+			if d:IsA("BasePart") then
+				table.insert(tvParts, d)
+				local half = d.Size / 2
+				for sx = -1, 1, 2 do
+					for sy = -1, 1, 2 do
+						for sz = -1, 1, 2 do
+							local c = pivot0:PointToObjectSpace((d.CFrame * CFrame.new(half.X * sx, half.Y * sy, half.Z * sz)).Position)
+							extMin = Vector3.new(math.min(extMin.X, c.X), math.min(extMin.Y, c.Y), math.min(extMin.Z, c.Z))
+							extMax = Vector3.new(math.max(extMax.X, c.X), math.max(extMax.Y, c.Y), math.max(extMax.Z, c.Z))
+						end
+					end
+				end
+			end
+		end
+		
+		if #tvParts > 0 then
+			local extSize = extMax - extMin
+			local extMid = (extMin + extMax) / 2
+			
+			local useZ = (TV_PUSH_AXIS == "Z")
+			local axisUnit = useZ and Vector3.new(0, 0, 1) or Vector3.new(1, 0, 0)
+			local function across(v)
+				return useZ and v.Z or v.X
+			end
+			local function along(v)
+				return useZ and v.X or v.Z
+			end
+			local minAcross, maxAcross = across(extMin), across(extMax)
+			local minAlong, maxAlong = along(extMin), along(extMax)
+			
+			-- returns 1 / -1 if you are next to one of the pushable sides (within dist), 0 if not
+			local function sideContact(worldPos, dist)
+				local rel = tv:GetPivot():PointToObjectSpace(worldPos)
+				if rel.Y < extMin.Y - 1 or rel.Y > extMax.Y + 3 then return 0 end
+				local a, l = across(rel), along(rel)
+				if l < minAlong - 0.5 or l > maxAlong + 0.5 then return 0 end
+				if a > maxAcross and a - maxAcross <= dist then return 1 end
+				if a < minAcross and minAcross - a <= dist then return -1 end
+				return 0
+			end
+			
+			-- stops the TV from being dragged through walls / drawers
+			local overlap = OverlapParams.new()
+			overlap.FilterType = Enum.RaycastFilterType.Exclude
+			local function blockedAt(newCF)
+				local list = {tv}
+				if player.Character then
+					table.insert(list, player.Character)
+				end
+				overlap.FilterDescendantsInstances = list
+				local boxSize = Vector3.new(math.max(extSize.X - 0.4, 0.2), math.max(extSize.Y - 1.2, 0.2), math.max(extSize.Z - 0.4, 0.2))
+				for _, p in ipairs(Workspace:GetPartBoundsInBox(newCF * CFrame.new(extMid), boxSize, overlap)) do
+					if p.CanCollide then
+						return true
+					end
+				end
+				return false
+			end
+			
+			local pushing = false
+			local needExit = false
+			local jumpFlag = false
+			local offset = Vector3.new(0, 0, 0)
+			local baseY = 0
+			
+			local function attach(hrp, sign)
+				local pivot = tv:GetPivot()
+				local off = pivot:PointToObjectSpace(hrp.Position)
+				local a = (sign > 0) and (maxAcross + TV_PUSH_STICK_GAP) or (minAcross - TV_PUSH_STICK_GAP)
+				if useZ then
+					off = Vector3.new(off.X, off.Y, a)
+				else
+					off = Vector3.new(a, off.Y, off.Z)
+				end
+				offset = off
+				baseY = pivot.Position.Y
+				pushing = true
+				-- the TV doesn't collide with you while you hold it (you are held at a fixed distance anyway)
+				for _, p in ipairs(tvParts) do
+					if p.Parent then
+						p.CanCollide = false
+					end
+				end
+			end
+			
+			local function detach()
+				if not pushing then return end
+				pushing = false
+				needExit = true -- you have to step away from the side before you can grab it again
+				for _, p in ipairs(tvParts) do
+					if p.Parent then
+						p.CanCollide = true
+					end
+				end
+			end
+			
+			local jumpConn = UserInputService.JumpRequest:Connect(function()
+				jumpFlag = true
+			end)
+			
+			local pushConn
+			pushConn = RunService.Heartbeat:Connect(function()
+				if not tv.Parent then
+					pushConn:Disconnect()
+					jumpConn:Disconnect()
+					return
+				end
+				
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
+				local jumped = jumpFlag
+				jumpFlag = false
+				
+				-- dead / something is happening with the TV: let go
+				if not hrp or not hum or hum.Health <= 0 or phase ~= "idle" then
+					detach()
+					return
+				end
+				
+				---------------- HOLDING THE TV ----------------
+				if pushing then
+					if jumped or hum:GetState() == Enum.HumanoidStateType.Jumping then
+						detach()
+						return
+					end
+					
+					local pivot = tv:GetPivot()
+					local rot = pivot - pivot.Position
+					local want = hrp.Position - rot:VectorToWorldSpace(offset)
+					want = Vector3.new(want.X, baseY, want.Z)
+					local cur = pivot.Position
+					local delta = want - cur
+					
+					if delta.Magnitude > 3 then
+						-- the TV can't keep up (blocked) or you got teleported: let go
+						detach()
+						return
+					end
+					
+					if delta.Magnitude > 0.002 then
+						local function cfAt(pos)
+							return CFrame.new(pos) * rot
+						end
+						if not blockedAt(cfAt(want)) then
+							tv:PivotTo(cfAt(want))
+						else
+							-- slide along walls
+							local tryX = Vector3.new(want.X, baseY, cur.Z)
+							local tryZ = Vector3.new(cur.X, baseY, want.Z)
+							if not blockedAt(cfAt(tryX)) then
+								tv:PivotTo(cfAt(tryX))
+							elseif not blockedAt(cfAt(tryZ)) then
+								tv:PivotTo(cfAt(tryZ))
+							end
+						end
+					end
+					return
+				end
+				
+				---------------- NOT HOLDING ----------------
+				if needExit then
+					if sideContact(hrp.Position, TV_PUSH_TOUCH_DISTANCE * 2.5) == 0 then
+						needExit = false
+					end
+					return
+				end
+				
+				local sign = sideContact(hrp.Position, TV_PUSH_TOUCH_DISTANCE)
+				if sign ~= 0 and not jumped then
+					-- you must be walking INTO the side to grab it
+					local into = tv:GetPivot():VectorToWorldSpace(axisUnit) * (-sign)
+					if hum.MoveDirection:Dot(into) > 0.3 then
+						attach(hrp, sign)
+					end
+				end
+			end)
+		end
+	end
 end
 
 -- Places the TV on the ground (facing you) and sets it up. It is NOT named like coins, so it never gets cleaned up.
@@ -1332,6 +1552,13 @@ local function spawnTV(groundPos, playerPos)
 	
 	local tv = tvTemplate:Clone()
 	tv.Name = "R4NS0M_TV"
+	
+	-- make the TV as big as TV_SCALE says
+	if TV_SCALE ~= 1 then
+		pcall(function()
+			tv:ScaleTo(TV_SCALE)
+		end)
+	end
 	
 	local look = Vector3.new(playerPos.X - groundPos.X, 0, playerPos.Z - groundPos.Z)
 	local faceCF = CFrame.new(groundPos)
@@ -1349,28 +1576,47 @@ local function spawnTV(groundPos, playerPos)
 end
 
 --------------------------------------------------------------------------------
--- PRE-PHASE: Top-Right Corner Square Preview -> Teleport to Center Dark Red BG
+-- PRE-PHASE ("stand still" warning):
+--   1) image in the top-left corner (+ spawn sound)
+--   2) it disappears, a new image shows in the center on a dark red bg
+--   3) both disappear for a moment
+--   4) the first image comes back to the center on a half transparent dark red bg that flickers
+--   moving while he is at the center = jumpscare + downloading text
 --------------------------------------------------------------------------------
 local preGui = Instance.new("ScreenGui")
 preGui.Name = "JumpscareDownloadGui"
 preGui.IgnoreGuiInset = true
 preGui.ResetOnSpawn = false
+preGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 preGui.Parent = playerGui
 
+-- dark red background (hidden until it is needed)
 local preBg = Instance.new("Frame")
 preBg.Size = UDim2.new(1, 0, 1, 0)
-preBg.BackgroundTransparency = 1
 preBg.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+preBg.BackgroundTransparency = 1
 preBg.BorderSizePixel = 0
+preBg.Visible = false
+preBg.ZIndex = 1
 preBg.Parent = preGui
 
-local previewImage = Instance.new("ImageLabel")
-previewImage.Image = "rbxthumb://type=Asset&id=101391416087473&w=420&h=420"
-previewImage.BackgroundTransparency = 1
-previewImage.Size = UDim2.new(0, 240, 0, 240)
-previewImage.AnchorPoint = Vector2.new(1, 0)
-previewImage.Position = UDim2.new(1, -20, 0, 20)
-previewImage.Parent = preBg
+local function makePreImage(id, size, anchor, pos)
+	local img = Instance.new("ImageLabel")
+	img.Image = "rbxthumb://type=Asset&id=" .. tostring(id) .. "&w=420&h=420"
+	img.BackgroundTransparency = 1
+	img.Size = UDim2.new(0, size, 0, size)
+	img.AnchorPoint = anchor
+	img.Position = pos
+	img.ZIndex = 2
+	img.Visible = false
+	img.Parent = preGui
+	return img
+end
+
+local cornerImage = makePreImage(PRE_IMAGE_A, PRE_CORNER_SIZE, Vector2.new(0, 0), UDim2.new(0, 20, 0, 20)) -- top-left corner
+local flashImage = makePreImage(PRE_IMAGE_B, PRE_CENTER_SIZE, Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0))
+local stareImage = makePreImage(PRE_IMAGE_A, PRE_CENTER_SIZE, Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0))
+cornerImage.Visible = true
 
 local spawnSound = Instance.new("Sound")
 spawnSound.Name = "SpawnSound"
@@ -2688,49 +2934,29 @@ local function startMainSequence()
 end
 
 --------------------------------------------------------------------------------
--- TIMELINE CONTROLLER FOR PRE-PHASE
+-- TIMELINE CONTROLLER FOR THE PRE-PHASE ("stand still" warning)
 --------------------------------------------------------------------------------
 task.spawn(function()
-	task.wait(0.8)
-	if mainSequenceTriggered then return end
+	local detecting = false -- moving only counts while this is true
 	
-	preBg.BackgroundTransparency = 0
-	previewImage.AnchorPoint = Vector2.new(0.5, 0.5)
-	previewImage.Position = UDim2.new(0.5, 0, 0.5, 0)
-	previewImage.Size = UDim2.new(0, 250, 0, 250)
-	
-	local checkElapsed = 0
-	local checkInterval = 2.0
-	
-	local character = player.Character or player.CharacterAdded:Wait()
-	local humanoid = character:WaitForChild("Humanoid", 5)
+	local function isMoving()
+		local char = player.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum and hum.MoveDirection.Magnitude > 0 then
+			return true
+		end
+		return UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.A)
+			or UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.D)
+			or UserInputService:IsKeyDown(Enum.KeyCode.Up) or UserInputService:IsKeyDown(Enum.KeyCode.Down)
+			or UserInputService:IsKeyDown(Enum.KeyCode.Left) or UserInputService:IsKeyDown(Enum.KeyCode.Right)
+	end
 	
 	local waitConn
-	waitConn = RunService.RenderStepped:Connect(function(dt)
-		checkElapsed += dt
-		
-		local isMoving = false
-		if humanoid and humanoid.MoveDirection.Magnitude > 0 then
-			isMoving = true
-		elseif UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Up) or UserInputService:IsKeyDown(Enum.KeyCode.Down) or UserInputService:IsKeyDown(Enum.KeyCode.Left) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
-			isMoving = true
-		end
-		
-		if isMoving then
-			waitConn:Disconnect()
-			startMainSequence()
-			return
-		end
-		
-		if checkElapsed >= checkInterval then
-			waitConn:Disconnect()
-			if preGui then
-				preGui:Destroy()
-			end
-			if spawnSound then
-				spawnSound:Destroy()
-			end
-			return
+	waitConn = RunService.RenderStepped:Connect(function()
+		if detecting and not mainSequenceTriggered and isMoving() then
+			startMainSequence() -- you moved while he is at the center: jumpscare + downloading text
 		end
 	end)
-end)
+	
+	local function aborted()
+		if mainSequenceTriggere
