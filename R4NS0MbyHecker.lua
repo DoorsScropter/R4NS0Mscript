@@ -56,7 +56,7 @@ local CRUCIFIX_SOUND_ID_2 = 115833319186798
 local CRUCIFIX_SOUND_VOLUME = 6
 
 -- TV SETTINGS
-local TV_ASSET_ID = 33731192 -- new TV model
+local TV_ASSET_ID = 12649626 -- new TV model
 local TV_CHANCE = 0.10 -- 1% chance per spawn (only ONE TV ever spawns per run)
 local TV_ROTATION = CFrame.Angles(0, 0, 0) -- if the TV faces the wrong way, try CFrame.Angles(0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
 local TV_STATIC_SOUND_ID = 138347177735590
