@@ -68,8 +68,8 @@ local CD_CONSUMED = true -- true = the CD-1 is used up when you insert it
 -- "OPEN TV?" SETTINGS
 local TV_OPEN_DELAY = 5 -- seconds the TV screen glows white (with static) before the clone appears
 local TV_OPEN_LIGHT_COLOR = Color3.fromRGB(255, 255, 255)
-local TV_OPEN_LIGHT_BRIGHTNESS = 8
-local TV_OPEN_LIGHT_RANGE = 35
+local TV_OPEN_LIGHT_BRIGHTNESS = 2
+local TV_OPEN_LIGHT_RANGE = 30
 
 -- "INSERT DISC?" SETTINGS
 local TV_INSERT_SOUND_1 = 78535264432518 -- plays for 1 second
