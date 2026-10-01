@@ -28,7 +28,7 @@ local PICKUP_DISTANCE = 10 -- how close you must be to see the "Collect Coins" /
 
 -- CD-1 TOOL SETTINGS
 local CD_ASSET_ID = 116084743176043
-local CD_CHANCE = 0.01 -- 1% chance per spawn (only ONE CD ever spawns per run)
+local CD_CHANCE = 0.03 -- 1% chance per spawn (only ONE CD ever spawns per run)
 local CD_TOOL_NAME = "CD-1"
 local CD_SCALE = 0.4 -- size of the CD (on the ground AND in your hand). 1 = original size
 local CD_GRIP = CFrame.new(0, 0, 0) -- how the CD sits in your hand (only used if the model isn't already a Tool)
@@ -57,7 +57,7 @@ local CRUCIFIX_SOUND_VOLUME = 6
 
 -- TV SETTINGS
 local TV_ASSET_ID = 17307663311 -- new TV model
-local TV_CHANCE = 0.10 -- 1% chance per spawn (only ONE TV ever spawns per run)
+local TV_CHANCE = 0.03 -- 1% chance per spawn (only ONE TV ever spawns per run)
 local TV_ROTATION = CFrame.Angles(0, 0, 0) -- if the TV faces the wrong way, try CFrame.Angles(0, math.rad(90), 0) / (0, math.rad(180), 0) / (0, math.rad(-90), 0)
 local TV_STATIC_SOUND_ID = 138347177735590
 local TV_IDLE_STATIC_VOLUME = 0 -- quiet static while the TV just stands there (0 = silent)
