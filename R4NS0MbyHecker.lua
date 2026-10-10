@@ -47,24 +47,24 @@ local PICKUP_DISTANCE = 10 -- how close you must be to see the "Collect Coins" /
 
 -- TINY COINS (the little coin images that burst out when you collect gold and fly into the R4NS0M window)
 local COIN_BIT_IMAGE_ID = 12771100802 -- the tiny coin image
-local COIN_BIT_SIZE_MIN = 30 -- BIGGER now (pixels)
+local COIN_BIT_SIZE_MIN = 70 -- BIGGER now (pixels)
 local COIN_BIT_SIZE_MAX = 46
 local COIN_BITS_PER_GOLD = 0.4 -- how many tiny coins per gold (500 gold x 0.4 = 200 coins)
 local COIN_BITS_MIN = 10 -- a tiny amount of gold still gives at least this many tiny coins
 local COIN_BITS_MAX = 200
 local COIN_BIT_SCATTER_TIME = 0.35 -- seconds they take to burst out around the coin
-local COIN_BIT_GATHER_TIME = 1.0 -- seconds they hang / gather in the air before flying
+local COIN_BIT_GATHER_TIME = 2 -- seconds they hang / gather in the air before flying
 local COIN_BIT_STAGGER = 0.5 -- each coin leaves a random 0 - this many seconds later (so they don't all go at once)
 local COIN_BIT_FLY_MIN = 0.55 -- seconds a coin takes to fly into the window (fastest)
 local COIN_BIT_FLY_MAX = 0.9 -- (slowest)
 local COIN_BIT_SCATTER_MIN = 50 -- how far they burst out (pixels)
 local COIN_BIT_SCATTER_MAX = 150
-local COIN_BIT_RECT_IMAGE_ID = 0 -- optional: put an image id here to use as the "red rectangle" on some coins (0 = a plain red rectangle is drawn)
+local COIN_BIT_RECT_IMAGE_ID = 17812313997 -- optional: put an image id here to use as the "red rectangle" on some coins (0 = a plain red rectangle is drawn)
 local COIN_ARRIVE_SOUND_ID = 103145890200043 -- plays (by chance) when a tiny coin reaches the window
-local COIN_ARRIVE_SOUND_CHANCE = 0.3 -- 30% per tiny coin
+local COIN_ARRIVE_SOUND_CHANCE = 10 -- 30% per tiny coin
 local COIN_ARRIVE_SOUND_VOLUME = 3
 local COIN_ARRIVE_SOUND_MIN_GAP = 0.05 -- seconds between those sounds (so 200 coins don't make 60 sounds at once)
-local COUNTER_DROP_SPEED = 60 -- how fast the gold counter counts down (it was 120, lower = slower)
+local COUNTER_DROP_SPEED = 30 -- how fast the gold counter counts down (it was 120, lower = slower)
 
 -- HONEYPOT SETTINGS (pick it up, equip it, tap to throw it, it explodes into yellow cubes when it hits something = instant gold)
 local HONEYPOT_ASSET_ID = 446555612
