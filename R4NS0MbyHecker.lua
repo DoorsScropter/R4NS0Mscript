@@ -52,19 +52,19 @@ local COIN_BIT_SIZE_MAX = 65 -- Increased maximum size (pixels)[cite: 1]
 local COIN_BITS_PER_GOLD = 0.4 -- how many tiny coins per gold (500 gold x 0.4 = 200 coins)[cite: 1]
 local COIN_BITS_MIN = 10 -- a tiny amount of gold still gives at least this many tiny coins[cite: 1]
 local COIN_BITS_MAX = 200
-local COIN_BIT_SCATTER_TIME = 0.35 -- seconds they take to burst out around the coin[cite: 1]
-local COIN_BIT_GATHER_TIME = 1.0 -- seconds they hang / gather in the air before flying[cite: 1]
+local COIN_BIT_SCATTER_TIME = 1 -- seconds they take to burst out around the coin[cite: 1]
+local COIN_BIT_GATHER_TIME = 3.0 -- seconds they hang / gather in the air before flying[cite: 1]
 local COIN_BIT_STAGGER = 0.5 -- each coin leaves a random 0 - this many seconds later (so they don't all go at once)[cite: 1]
-local COIN_BIT_FLY_MIN = 0.55 -- seconds a coin takes to fly into the window (fastest)[cite: 1]
+local COIN_BIT_FLY_MIN = 0.33 -- seconds a coin takes to fly into the window (fastest)[cite: 1]
 local COIN_BIT_FLY_MAX = 0.9 -- (slowest)[cite: 1]
-local COIN_BIT_SCATTER_MIN = 50 -- how far they burst out (pixels)[cite: 1]
+local COIN_BIT_SCATTER_MIN = 70 -- how far they burst out (pixels)[cite: 1]
 local COIN_BIT_SCATTER_MAX = 150
 local COIN_BIT_RECT_IMAGE_ID = 0 -- optional: put an image id here to use as the rectangle on some coins[cite: 1]
 local COIN_ARRIVE_SOUND_ID = 103145890200043 -- plays (by chance) when a tiny coin reaches the window[cite: 1]
 local COIN_ARRIVE_SOUND_CHANCE = 0.3 -- 30% per tiny coin[cite: 1]
 local COIN_ARRIVE_SOUND_VOLUME = 3
-local COIN_ARRIVE_SOUND_MIN_GAP = 0.05 -- seconds between those sounds[cite: 1]
-local COUNTER_DROP_SPEED = 60 -- how fast the gold counter counts down[cite: 1]
+local COIN_ARRIVE_SOUND_MIN_GAP = 0.5 -- seconds between those sounds[cite: 1]
+local COUNTER_DROP_SPEED = 30 -- how fast the gold counter counts down[cite: 1]
 
 -- HONEYPOT SETTINGS (pick it up, equip it, tap to throw it, it explodes into yellow cubes when it hits something = instant gold)[cite: 1]
 local HONEYPOT_ASSET_ID = 446555612
