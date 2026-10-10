@@ -1,4 +1,4 @@
--- DOORS Compatible GUI + Spawn Sound + Fixed Movement Detection (R4NS0M Title + Custom Pop-up Names + Shaking Popups)
+-- DOORS Compatible GUI + Spawn Sound + Fixed Movement Detection (R4NS0M Title + Custom Pop-up Names + Shaking Popups + Honeypot + Tiny Coin Bits)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
@@ -19,16 +19,23 @@ local THEME_TARGET_SECONDS = 90 -- the theme is stretched / squeezed to last exa
 local THEME_VOLUME = 10 -- loud
 local THEME_EXTEND_JUMPSCARE = false -- true = after the jumpscare audio ends, the FIRST HALF of the theme is cloned in to extend the music
 
+-- BACKGROUND IMAGE (used for the "Downloading" screen AND the dark bg of the PRE-phase jumpscare)
+local DOWNLOAD_BG_IMAGE_ID = 122867299887975
+
+-- MAIN R4NS0M WINDOW SIZE (the image the tiny coins fly into) - it was 450 x 292
+local WINDOW_WIDTH = 450
+local WINDOW_HEIGHT = 292
+
 -- "STAND STILL" WARNING (the corner image -> center images, before the jumpscare)
 local PRE_IMAGE_A = 12350997710 -- shows in the top-left corner, then comes back to the center
 local PRE_IMAGE_B = 12440673966 -- the quick flash in the center
 local PRE_CORNER_TIME = 0.5 -- seconds the image stays in the corner
-local PRE_FLASH_TIME = 0.4 -- seconds the flash image + dark red bg stay in the center
-local PRE_GAP_TIME = 0.4 -- seconds of nothing between the flash and the final stare
+local PRE_FLASH_TIME = 0.4 -- seconds the flash image + bg stay in the center
+local PRE_GAP_TIME = 0 -- seconds of nothing between the flash and the final stare
 local PRE_STARE_TIME = 0.7 -- seconds the final image stays in the center (with the flickering bg)
 local PRE_CORNER_SIZE = 300 -- size of the corner image (pixels)
 local PRE_CENTER_SIZE = 420 -- size of the center images (pixels)
-local PRE_FLICKER_SPEED = 0.06 -- how fast the dark red bg flickers during the final stare
+local PRE_FLICKER_SPEED = 0.06 -- how fast the bg flickers during the final stare
 local PRE_DETECT_IN_FLASH = false -- false = moving only counts during the final stare (when he is at the center), true = also counts during the flash
 
 -- COIN MODEL SETTINGS
@@ -37,6 +44,42 @@ local COIN_SCALE = 1 -- make bigger/smaller (example: 1.5 or 0.7)
 local COIN_ROTATION = CFrame.Angles(0, 0, 0) -- if the coin lies wrong, try CFrame.Angles(math.rad(90), 0, 0) or CFrame.Angles(0, 0, math.rad(90))
 local COIN_HOVER = 0.15 -- how far the coin floats above the ground
 local PICKUP_DISTANCE = 10 -- how close you must be to see the "Collect Coins" / "Pick Up" option
+
+-- TINY COINS (the little coin images that burst out when you collect gold and fly into the R4NS0M window)
+local COIN_BIT_IMAGE_ID = 12771100802 -- the tiny coin image
+local COIN_BIT_SIZE_MIN = 30 -- BIGGER now (pixels)
+local COIN_BIT_SIZE_MAX = 46
+local COIN_BITS_PER_GOLD = 0.4 -- how many tiny coins per gold (500 gold x 0.4 = 200 coins)
+local COIN_BITS_MIN = 10 -- a tiny amount of gold still gives at least this many tiny coins
+local COIN_BITS_MAX = 200
+local COIN_BIT_SCATTER_TIME = 0.35 -- seconds they take to burst out around the coin
+local COIN_BIT_GATHER_TIME = 1.0 -- seconds they hang / gather in the air before flying
+local COIN_BIT_STAGGER = 0.5 -- each coin leaves a random 0 - this many seconds later (so they don't all go at once)
+local COIN_BIT_FLY_MIN = 0.55 -- seconds a coin takes to fly into the window (fastest)
+local COIN_BIT_FLY_MAX = 0.9 -- (slowest)
+local COIN_BIT_SCATTER_MIN = 50 -- how far they burst out (pixels)
+local COIN_BIT_SCATTER_MAX = 150
+local COIN_BIT_RECT_IMAGE_ID = 0 -- optional: put an image id here to use as the "red rectangle" on some coins (0 = a plain red rectangle is drawn)
+local COIN_ARRIVE_SOUND_ID = 103145890200043 -- plays (by chance) when a tiny coin reaches the window
+local COIN_ARRIVE_SOUND_CHANCE = 0.3 -- 30% per tiny coin
+local COIN_ARRIVE_SOUND_VOLUME = 3
+local COIN_ARRIVE_SOUND_MIN_GAP = 0.05 -- seconds between those sounds (so 200 coins don't make 60 sounds at once)
+local COUNTER_DROP_SPEED = 60 -- how fast the gold counter counts down (it was 120, lower = slower)
+
+-- HONEYPOT SETTINGS (pick it up, equip it, tap to throw it, it explodes into yellow cubes when it hits something = instant gold)
+local HONEYPOT_ASSET_ID = 446555612
+local HONEYPOT_CHANCE = 0.05 -- 5% chance per spawn cycle
+local HONEYPOT_TOOL_NAME = "Honeypot"
+local HONEYPOT_SCALE = 1
+local HONEYPOT_GRIP = CFrame.new(0, 0, 0) -- how it sits in your hand (only used if the model isn't already a Tool)
+local HONEYPOT_GOLD = 500 -- gold you get when it explodes (that also sends 200 tiny coins)
+local HONEYPOT_THROW_SPEED = 90 -- how hard you throw it
+local HONEYPOT_THROW_UP = 0.15 -- upward tilt of the throw
+local HONEYPOT_MAX_FLIGHT = 8 -- explodes by itself after this many seconds if it never hits anything
+local HONEYPOT_CUBE_COUNT = 45 -- how many yellow cubes fly out
+local HONEYPOT_CUBE_COLOR = Color3.fromRGB(255, 220, 0)
+local HONEYPOT_CUBE_LIFETIME = 3
+local HONEYPOT_EXPLODE_SPEED = 60
 
 -- CD-1 TOOL SETTINGS
 local CD_ASSET_ID = 116084743176043
@@ -158,6 +201,11 @@ end
 if playerGui:FindFirstChild("VictoryPopupGui") then
 	playerGui.VictoryPopupGui:Destroy()
 end
+for _, g in ipairs(playerGui:GetChildren()) do
+	if g.Name == "R4NS0MCoinBits" then
+		g:Destroy()
+	end
+end
 if SoundService:FindFirstChild("JumpscareSound") then
 	SoundService.JumpscareSound:Destroy()
 end
@@ -180,7 +228,8 @@ end
 -- Cleanup old spawned map coins / CDs / TV / drawers / clones from a previous run
 for _, obj in ipairs(Workspace:GetChildren()) do
 	if obj.Name == "MapCollectibleCoin" or obj.Name == "R4NS0M_TV" or obj.Name == "R4NS0M_Drawer"
-		or obj.Name == "R4NS0M_Clone" or obj.Name == "R4NS0M_EvilClone" or obj.Name == "R4NS0M_CrucifixCross" then
+		or obj.Name == "R4NS0M_Clone" or obj.Name == "R4NS0M_EvilClone" or obj.Name == "R4NS0M_CrucifixCross"
+		or obj.Name == "R4NS0M_HoneypotThrown" or obj.Name == "HoneyCube" then
 		obj:Destroy()
 	end
 end
@@ -281,6 +330,97 @@ local function addPickupPrompt(obj, actionText)
 end
 
 --------------------------------------------------------------------------------
+-- TINY COIN IMAGES (the little coins that fly into the R4NS0M window)
+-- variants: gold (normal) / red / white / black / coin with a red rectangle on it
+--------------------------------------------------------------------------------
+local function pickBitVariant()
+	local r = math.random()
+	if r < 0.40 then
+		return "gold"
+	elseif r < 0.58 then
+		return "red"
+	elseif r < 0.72 then
+		return "white"
+	elseif r < 0.84 then
+		return "black"
+	else
+		return "rect"
+	end
+end
+
+local function makeCoinBit(parent, size)
+	local variant = pickBitVariant()
+	
+	local holder = Instance.new("Frame")
+	holder.Name = "CoinBit"
+	holder.BackgroundTransparency = 1
+	holder.BorderSizePixel = 0
+	holder.Size = UDim2.new(0, size, 0, size)
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.Parent = parent
+	
+	if variant == "white" then
+		-- white disc behind a faded coin so it reads as a white coin
+		local disc = Instance.new("Frame")
+		disc.Name = "WhiteDisc"
+		disc.AnchorPoint = Vector2.new(0.5, 0.5)
+		disc.Position = UDim2.new(0.5, 0, 0.5, 0)
+		disc.Size = UDim2.new(0.86, 0, 0.86, 0)
+		disc.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		disc.BorderSizePixel = 0
+		disc.ZIndex = 1
+		disc.Parent = holder
+		local discCorner = Instance.new("UICorner")
+		discCorner.CornerRadius = UDim.new(0.5, 0)
+		discCorner.Parent = disc
+	end
+	
+	local img = Instance.new("ImageLabel")
+	img.Name = "CoinImage"
+	img.Image = "rbxthumb://type=Asset&id=" .. tostring(COIN_BIT_IMAGE_ID) .. "&w=150&h=150"
+	img.BackgroundTransparency = 1
+	img.Size = UDim2.new(1, 0, 1, 0)
+	img.ZIndex = 2
+	img.Parent = holder
+	
+	if variant == "red" then
+		img.ImageColor3 = Color3.fromRGB(255, 40, 40)
+	elseif variant == "black" then
+		img.ImageColor3 = Color3.fromRGB(0, 0, 0)
+	elseif variant == "white" then
+		img.ImageTransparency = 0.6
+	elseif variant == "rect" then
+		if COIN_BIT_RECT_IMAGE_ID ~= 0 then
+			local rectImg = Instance.new("ImageLabel")
+			rectImg.Name = "RedRectangle"
+			rectImg.AnchorPoint = Vector2.new(0.5, 0.5)
+			rectImg.Position = UDim2.new(0.5, 0, 0.5, 0)
+			rectImg.Size = UDim2.new(0.7, 0, 0.5, 0)
+			rectImg.BackgroundTransparency = 1
+			rectImg.Image = "rbxthumb://type=Asset&id=" .. tostring(COIN_BIT_RECT_IMAGE_ID) .. "&w=150&h=150"
+			rectImg.ZIndex = 3
+			rectImg.Parent = holder
+		else
+			local rect = Instance.new("Frame")
+			rect.Name = "RedRectangle"
+			rect.AnchorPoint = Vector2.new(0.5, 0.5)
+			rect.Position = UDim2.new(0.5, 0, 0.5, 0)
+			rect.Size = UDim2.new(0.7, 0, 0.45, 0)
+			rect.BackgroundColor3 = Color3.fromRGB(220, 0, 0)
+			rect.BorderSizePixel = 0
+			rect.ZIndex = 3
+			rect.Parent = holder
+			local stroke = Instance.new("UIStroke")
+			stroke.Color = Color3.fromRGB(70, 0, 0)
+			stroke.Thickness = 2
+			stroke.Parent = rect
+		end
+	end
+	
+	return holder
+end
+
+--------------------------------------------------------------------------------
 -- LOAD COIN MODEL (Delta compatible: game:GetObjects)
 --------------------------------------------------------------------------------
 local coinTemplate = nil
@@ -320,10 +460,11 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- LOAD TOOLS (CD-1 + Crucifix): turns whatever the asset is into a holdable Tool
+-- LOAD TOOLS (CD-1 + Crucifix + Honeypot): turns whatever the asset is into a holdable Tool
 --------------------------------------------------------------------------------
 local cdToolTemplate = nil
 local crucifixToolTemplate = nil
+local honeyToolTemplate = nil
 
 -- Scales a Tool / Model / Part (works on Tools by temporarily wrapping their contents)
 local function scaleInstance(inst, s)
@@ -450,6 +591,9 @@ loadToolTemplate(CD_ASSET_ID, CD_TOOL_NAME, CD_GRIP, CD_SCALE, function(t)
 end)
 loadToolTemplate(CRUCIFIX_ASSET_ID, CRUCIFIX_TOOL_NAME, CRUCIFIX_GRIP, CRUCIFIX_SCALE, function(t)
 	crucifixToolTemplate = t
+end)
+loadToolTemplate(HONEYPOT_ASSET_ID, HONEYPOT_TOOL_NAME, HONEYPOT_GRIP, HONEYPOT_SCALE, function(t)
+	honeyToolTemplate = t
 end)
 
 -- Makes the version of a tool that sits on the map (anchored copy of the tool's parts, already scaled)
@@ -1578,10 +1722,11 @@ end
 --------------------------------------------------------------------------------
 -- PRE-PHASE ("stand still" warning):
 --   1) image in the top-left corner (+ spawn sound)
---   2) it disappears, a new image shows in the center on a dark red bg
+--   2) it disappears, a new image shows in the center on the bg image
 --   3) both disappear for a moment
---   4) the first image comes back to the center on a half transparent dark red bg that flickers
+--   4) the first image comes back to the center on the half transparent bg image that flickers
 --   moving while he is at the center = jumpscare + downloading text
+-- The spawn sound is NEVER cut off when the images get destroyed: it plays until it ends by itself.
 --------------------------------------------------------------------------------
 local preGui = Instance.new("ScreenGui")
 preGui.Name = "JumpscareDownloadGui"
@@ -1590,12 +1735,16 @@ preGui.ResetOnSpawn = false
 preGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 preGui.Parent = playerGui
 
--- dark red background (hidden until it is needed)
-local preBg = Instance.new("Frame")
+-- bg image (hidden until it is needed)
+local preBg = Instance.new("ImageLabel")
+preBg.Name = "PreBackground"
 preBg.Size = UDim2.new(1, 0, 1, 0)
-preBg.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+preBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 preBg.BackgroundTransparency = 1
 preBg.BorderSizePixel = 0
+preBg.Image = "rbxthumb://type=Asset&id=" .. tostring(DOWNLOAD_BG_IMAGE_ID) .. "&w=768&h=432"
+preBg.ScaleType = Enum.ScaleType.Crop
+preBg.ImageTransparency = 1
 preBg.Visible = false
 preBg.ZIndex = 1
 preBg.Parent = preGui
@@ -1625,6 +1774,17 @@ spawnSound.Volume = 5
 spawnSound.Parent = SoundService
 spawnSound:Play()
 
+-- Lets the spawn sound finish on its own (never destroys / stops it early)
+local function releaseSpawnSound()
+	local s = spawnSound
+	spawnSound = nil
+	if not s then return end
+	s.Ended:Connect(function()
+		s:Destroy()
+	end)
+	Debris:AddItem(s, 60)
+end
+
 local mainSequenceTriggered = false
 
 local function startMainSequence()
@@ -1632,7 +1792,7 @@ local function startMainSequence()
 	mainSequenceTriggered = true
 	
 	if preGui then preGui:Destroy() end
-	if spawnSound then spawnSound:Destroy() end
+	releaseSpawnSound() -- the images are gone, but the sound keeps playing until it ends
 	
 	local sound = Instance.new("Sound")
 	sound.Name = "JumpscareSound"
@@ -1698,14 +1858,16 @@ local function startMainSequence()
 	end)
 
 	----------------------------------------------------------------------------
-	-- PHASE 2
+	-- PHASE 2 (the "Downloading" screen: bg image + pixelated text)
 	----------------------------------------------------------------------------
 	task.delay(phase1Duration, function()
-		local bgFrame = Instance.new("Frame")
+		local bgFrame = Instance.new("ImageLabel")
 		bgFrame.Name = "DownloadBackground"
 		bgFrame.Size = UDim2.new(1, 0, 1, 0)
-		bgFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+		bgFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		bgFrame.BorderSizePixel = 0
+		bgFrame.Image = "rbxthumb://type=Asset&id=" .. tostring(DOWNLOAD_BG_IMAGE_ID) .. "&w=768&h=432"
+		bgFrame.ScaleType = Enum.ScaleType.Crop
 		bgFrame.Parent = screenGui
 		
 		local textLabel = Instance.new("TextLabel")
@@ -1717,11 +1879,7 @@ local function startMainSequence()
 		textLabel.Text = "Downloading."
 		textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 		textLabel.TextScaled = true
-		
-		local successFont, fontResult = pcall(function()
-			return Enum.Font.Oswald
-		end)
-		textLabel.Font = successFont and fontResult or Enum.Font.SourceSansBold
+		textLabel.Font = Enum.Font.Arcade -- pixelated font
 		textLabel.Parent = bgFrame
 		
 		local barContainer = Instance.new("Frame")
@@ -1760,10 +1918,6 @@ local function startMainSequence()
 		
 		textConn = RunService.RenderStepped:Connect(function(dt)
 			phase2Elapsed += dt
-			
-			if math.random(1, 3) == 1 then
-				bgFrame.BackgroundColor3 = Color3.fromRGB(math.random(150, 255), 0, 0)
-			end
 			
 			local progress = math.clamp(phase2Elapsed / totalPhase2Duration, 0, 1)
 			
@@ -2023,13 +2177,13 @@ local function startMainSequence()
 				end
 				
 				--------------------------------------------------------------------
-				-- 2. MAIN WINDOW (R4NS0M)
+				-- 2. MAIN WINDOW (R4NS0M) - a bit bigger now
 				--------------------------------------------------------------------
 				local mainWindow = Instance.new("Frame")
 				mainWindow.Name = "ShapeImage_MainContainer"
 				mainWindow.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
 				mainWindow.BorderSizePixel = 0
-				mainWindow.Size = UDim2.new(0, 450, 0, 292)
+				mainWindow.Size = UDim2.new(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
 				mainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 				mainWindow.Position = UDim2.new(math.random(20, 80)/100, 0, math.random(20, 80)/100, 0)
 				mainWindow.ZIndex = 10
@@ -2144,8 +2298,8 @@ local function startMainSequence()
 				finalConn = RunService.RenderStepped:Connect(function(dt)
 					if hasFailed or hasWon then return end
 					
-					-- WIN
-					if targetCoins <= 0 and not hasWon then
+					-- WIN (waits until the counter finished counting down to 0)
+					if targetCoins <= 0 and displayCoins <= 0 and not hasWon then
 						hasWon = true
 						if finalConn then finalConn:Disconnect() end
 						
@@ -2179,7 +2333,7 @@ local function startMainSequence()
 							vicWindow.Name = "VictoryWindow"
 							vicWindow.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
 							vicWindow.BorderSizePixel = 0
-							vicWindow.Size = UDim2.new(0, 450, 0, 292)
+							vicWindow.Size = UDim2.new(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
 							vicWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 							vicWindow.Position = UDim2.new(0.5, 0, 0.5, 0)
 							vicWindow.ClipsDescendants = true
@@ -2374,11 +2528,12 @@ local function startMainSequence()
 						end
 					end
 					
+					-- gold counter counts up / down (slower now)
 					if displayCoins > targetCoins then
-						displayCoins = math.max(targetCoins, displayCoins - (dt * 120))
+						displayCoins = math.max(targetCoins, displayCoins - (dt * COUNTER_DROP_SPEED))
 						subText.Text = tostring(math.round(displayCoins))
 					elseif displayCoins < targetCoins then
-						displayCoins = math.min(targetCoins, displayCoins + (dt * 120))
+						displayCoins = math.min(targetCoins, displayCoins + (dt * COUNTER_DROP_SPEED))
 						subText.Text = tostring(math.round(displayCoins))
 					end
 				end)
@@ -2541,8 +2696,9 @@ local function startMainSequence()
 				end
 				
 				----------------------------------------------------------------
-				-- COIN REWARD (shared by coin pickups and the drawer):
-				-- coin bits fly to the R4NS0M window + the counter drops
+				-- COIN REWARD (shared by coin pickups, the drawer and the honeypot):
+				-- tiny coins burst out, hang in the air for 1 second, then fly (curved) into the R4NS0M window.
+				-- The gold counter drops as each tiny coin lands.
 				----------------------------------------------------------------
 				local function playCollectSound()
 					local collectSound = Instance.new("Sound")
@@ -2555,10 +2711,19 @@ local function startMainSequence()
 					end)
 				end
 				
-				local function awardCoin(coinWorldPos)
+				local lastArriveSound = 0
+				
+				local function awardCoin(coinWorldPos, amount)
+					amount = amount or ({5, 10, 20, 50, 100})[math.random(1, 5)]
+					-- more gold = more tiny coins (500 gold = 200 coins, a tiny amount still gives at least 10)
+					local numBits = math.clamp(math.floor(amount * COIN_BITS_PER_GOLD + 0.5), COIN_BITS_MIN, COIN_BITS_MAX)
+					
 					task.spawn(function()
 						local particleGui = Instance.new("ScreenGui")
+						particleGui.Name = "R4NS0MCoinBits"
 						particleGui.IgnoreGuiInset = true
+						particleGui.ResetOnSpawn = false
+						particleGui.DisplayOrder = 10
 						particleGui.Parent = playerGui
 						
 						local camera = Workspace.CurrentCamera
@@ -2566,66 +2731,248 @@ local function startMainSequence()
 						local startX = onScreen and vector.X or (camera.ViewportSize.X / 2)
 						local startY = onScreen and vector.Y or (camera.ViewportSize.Y / 2)
 						
-						local numBits = 8
 						local bits = {}
 						for b = 1, numBits do
-							local bit = Instance.new("ImageLabel")
-							bit.Image = "rbxthumb://type=Asset&id=12771100802&w=150&h=150"
-							bit.BackgroundTransparency = 1
-							bit.Size = UDim2.new(0, 12, 0, 12)
-							bit.Position = UDim2.new(0, startX, 0, startY)
-							bit.Parent = particleGui
+							local size = math.random(COIN_BIT_SIZE_MIN, COIN_BIT_SIZE_MAX)
+							local holder = makeCoinBit(particleGui, size)
+							holder.Position = UDim2.new(0, startX, 0, startY)
+							holder.Rotation = math.random(0, 359)
 							
-							local scatterAngle = math.random() * math.pi * 2
-							local scatterDist = math.random(30, 70)
-							table.insert(bits, {
-								Object = bit,
-								PeakX = startX + math.cos(scatterAngle) * scatterDist,
-								PeakY = startY + math.sin(scatterAngle) * scatterDist,
+							local ang = math.random() * math.pi * 2
+							local dist = COIN_BIT_SCATTER_MIN + math.random() * (COIN_BIT_SCATTER_MAX - COIN_BIT_SCATTER_MIN)
+							local peakX = startX + math.cos(ang) * dist
+							local peakY = startY + math.sin(ang) * dist
+							
+							bits[b] = {
+								Object = holder,
 								StartX = startX,
-								StartY = startY
-							})
+								StartY = startY,
+								PeakX = peakX,
+								PeakY = peakY,
+								HoverX = peakX,
+								HoverY = peakY,
+								LeaveAt = COIN_BIT_SCATTER_TIME + COIN_BIT_GATHER_TIME + math.random() * COIN_BIT_STAGGER,
+								FlyTime = COIN_BIT_FLY_MIN + math.random() * (COIN_BIT_FLY_MAX - COIN_BIT_FLY_MIN),
+								FlyStartT = nil,
+								Phase = math.random() * math.pi * 2,
+								Spin = (math.random() - 0.5) * 360,
+								Bend = (math.random() - 0.5) * 320,
+								Done = false
+							}
 						end
 						
-						local shatterDuration = 0.45
-						local sElapsed = 0
-						while sElapsed < shatterDuration do
+						local t = 0
+						local remaining = numBits
+						local arrived = 0
+						local targetX, targetY = startX, startY
+						
+						while remaining > 0 and t < 20 do
 							local dt = RunService.RenderStepped:Wait()
-							sElapsed += dt
-							local alpha = math.clamp(sElapsed / shatterDuration, 0, 1)
-							local targetAbsPos = mainWindow.AbsolutePosition + (mainWindow.AbsoluteSize / 2)
+							t += dt
 							
-							for _, data in ipairs(bits) do
-								if data.Object and data.Object.Parent then
-									local curX, curY
-									if alpha < 0.4 then
-										local subAlpha = alpha / 0.4
-										curX = data.StartX + (data.PeakX - data.StartX) * subAlpha
-										curY = data.StartY + (data.PeakY - data.StartY) * subAlpha
+							-- the window moves around, so aim at its current center every frame
+							if mainWindow and mainWindow.Parent then
+								local c = mainWindow.AbsolutePosition + mainWindow.AbsoluteSize / 2
+								targetX, targetY = c.X, c.Y
+							end
+							
+							for _, d in ipairs(bits) do
+								if not d.Done then
+									local x, y
+									
+									if t < COIN_BIT_SCATTER_TIME then
+										-- 1) burst out
+										local a = t / COIN_BIT_SCATTER_TIME
+										a = 1 - (1 - a) * (1 - a)
+										x = d.StartX + (d.PeakX - d.StartX) * a
+										y = d.StartY + (d.PeakY - d.StartY) * a
+										d.HoverX, d.HoverY = x, y
+									elseif t < d.LeaveAt then
+										-- 2) hang / gather in the air (about 1 second)
+										x = d.PeakX + math.sin(t * 7 + d.Phase) * 7
+										y = d.PeakY + math.cos(t * 6 + d.Phase) * 7
+										d.HoverX, d.HoverY = x, y
 									else
-										local subAlpha = (alpha - 0.4) / 0.6
-										curX = data.PeakX + (targetAbsPos.X - data.PeakX) * subAlpha
-										curY = data.PeakY + (targetAbsPos.Y - data.PeakY) * subAlpha
+										-- 3) fly into the window on a curve, speeding up
+										if not d.FlyStartT then
+											d.FlyStartT = t
+										end
+										local a = math.clamp((t - d.FlyStartT) / d.FlyTime, 0, 1)
+										local e = a * a
+										local p0x, p0y = d.HoverX, d.HoverY
+										local dx, dy = targetX - p0x, targetY - p0y
+										local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+										local cx = (p0x + targetX) / 2 + (-dy / len) * d.Bend
+										local cy = (p0y + targetY) / 2 + (dx / len) * d.Bend
+										local inv = 1 - e
+										x = inv * inv * p0x + 2 * inv * e * cx + e * e * targetX
+										y = inv * inv * p0y + 2 * inv * e * cy + e * e * targetY
+										
+										if a >= 1 then
+											-- reached the window
+											d.Done = true
+											d.Object:Destroy()
+											remaining -= 1
+											arrived += 1
+											
+											-- the counter drops as the coins land (split exactly so the total = amount)
+											if not hasWon and not hasFailed and targetCoins > 0 then
+												local part = math.floor(amount * arrived / numBits) - math.floor(amount * (arrived - 1) / numBits)
+												targetCoins = math.max(0, targetCoins - part)
+											end
+											
+											-- 30% chance of the landing sound
+											if math.random() < COIN_ARRIVE_SOUND_CHANCE and os.clock() - lastArriveSound >= COIN_ARRIVE_SOUND_MIN_GAP then
+												lastArriveSound = os.clock()
+												playOneShot(COIN_ARRIVE_SOUND_ID, COIN_ARRIVE_SOUND_VOLUME)
+											end
+										end
 									end
-									data.Object.Position = UDim2.new(0, curX, 0, curY)
+									
+									if not d.Done then
+										d.Object.Position = UDim2.new(0, x, 0, y)
+										d.Object.Rotation = d.Object.Rotation + d.Spin * dt
+									end
 								end
 							end
 						end
+						
 						particleGui:Destroy()
 					end)
-					
-					local deductions = {5, 10, 20, 50, 100}
-					local chosenDeduct = deductions[math.random(1, #deductions)]
-					if targetCoins > 0 then
-						targetCoins = math.max(0, targetCoins - chosenDeduct)
-						subText.TextSize = 35
-						task.spawn(function()
-							for sz = 35, 20, -2 do
-								subText.TextSize = sz
-								task.wait(0.015)
+				end
+				
+				----------------------------------------------------------------
+				-- HONEYPOT: pick it up (prompt) -> equip it -> tap to throw it -> it explodes into
+				-- yellow cubes when it hits something -> +500 gold instantly (200 tiny coins fly to the window)
+				----------------------------------------------------------------
+				local function explodeHoneypot(pos)
+					for _ = 1, HONEYPOT_CUBE_COUNT do
+						local cube = Instance.new("Part")
+						cube.Name = "HoneyCube"
+						local s = 0.4 + math.random() * 0.6
+						cube.Size = Vector3.new(s, s, s)
+						cube.Color = HONEYPOT_CUBE_COLOR
+						cube.Material = Enum.Material.Neon
+						cube.Anchored = false
+						cube.CanCollide = true
+						cube.CanTouch = false
+						cube.CanQuery = false
+						cube.CFrame = CFrame.new(pos + Vector3.new((math.random() - 0.5) * 1.5, (math.random() - 0.5) * 1.5, (math.random() - 0.5) * 1.5))
+							* CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6)
+						cube.Parent = Workspace
+						
+						local dir = Vector3.new(math.random() - 0.5, math.random() * 0.8 + 0.2, math.random() - 0.5)
+						if dir.Magnitude < 0.01 then
+							dir = Vector3.new(0, 1, 0)
+						end
+						cube.AssemblyLinearVelocity = dir.Unit * (HONEYPOT_EXPLODE_SPEED * (0.4 + math.random() * 0.6))
+						cube.AssemblyAngularVelocity = Vector3.new((math.random() - 0.5) * 30, (math.random() - 0.5) * 30, (math.random() - 0.5) * 30)
+						
+						Debris:AddItem(cube, HONEYPOT_CUBE_LIFETIME)
+						task.delay(math.max(0, HONEYPOT_CUBE_LIFETIME - 0.6), function()
+							if cube and cube.Parent then
+								TweenService:Create(cube, TweenInfo.new(0.5), {Transparency = 1}):Play()
 							end
 						end)
 					end
+				end
+				
+				-- Builds the physical (unanchored) honeypot that flies through the air
+				local function makeThrownHoneypot(template)
+					local model = Instance.new("Model")
+					model.Name = "R4NS0M_HoneypotThrown"
+					
+					local clone = template:Clone()
+					for _, child in ipairs(clone:GetChildren()) do
+						child.Parent = model
+					end
+					clone:Destroy()
+					
+					local parts = {}
+					for _, d in ipairs(model:GetDescendants()) do
+						if d:IsA("BasePart") then
+							table.insert(parts, d)
+						end
+					end
+					
+					local main = getMainPart(model)
+					if not main then
+						model:Destroy()
+						return nil
+					end
+					
+					for _, p in ipairs(parts) do
+						p.Anchored = false
+						p.CanTouch = true
+						p.CanQuery = true
+						p.CanCollide = (p == main)
+						p.Massless = (p ~= main)
+						if p ~= main then
+							local wc = Instance.new("WeldConstraint")
+							wc.Part0 = main
+							wc.Part1 = p
+							wc.Parent = p
+						end
+					end
+					model.PrimaryPart = main
+					
+					return model, main, parts
+				end
+				
+				local function throwHoneypot(tool)
+					if not tool or tool:GetAttribute("Thrown") then return end
+					if not honeyToolTemplate then return end
+					
+					local char = player.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					local camera = Workspace.CurrentCamera
+					if not hrp or not camera then return end
+					
+					tool:SetAttribute("Thrown", true)
+					
+					local model, main, parts = makeThrownHoneypot(honeyToolTemplate)
+					if not model then
+						tool:SetAttribute("Thrown", false)
+						return
+					end
+					
+					local dir = (camera.CFrame.LookVector + Vector3.new(0, HONEYPOT_THROW_UP, 0)).Unit
+					local startPos = hrp.Position + Vector3.new(0, 1.5, 0) + dir * 3
+					
+					model.Parent = Workspace
+					model:PivotTo(CFrame.new(startPos))
+					main.AssemblyLinearVelocity = dir * HONEYPOT_THROW_SPEED
+					main.AssemblyAngularVelocity = Vector3.new((math.random() - 0.5) * 12, (math.random() - 0.5) * 12, (math.random() - 0.5) * 12)
+					
+					-- thrown: the tool in your hand is used up
+					tool:Destroy()
+					
+					local exploded = false
+					local function boom()
+						if exploded then return end
+						exploded = true
+						local pos = main.Position
+						model:Destroy()
+						explodeHoneypot(pos)
+						playCollectSound()
+						if isRoundActive() then
+							awardCoin(pos, HONEYPOT_GOLD) -- 500 gold instantly + 200 tiny coins
+						end
+					end
+					
+					local t0 = os.clock()
+					for _, p in ipairs(parts) do
+						p.Touched:Connect(function(hit)
+							if exploded or os.clock() - t0 < 0.12 then return end
+							if hit:IsDescendantOf(model) then return end
+							if char and hit:IsDescendantOf(char) then return end
+							if hit.Name == "HoneyCube" or not hit.CanCollide then return end
+							boom()
+						end)
+					end
+					
+					-- if it never hits anything it still explodes after a while
+					task.delay(HONEYPOT_MAX_FLIGHT, boom)
 				end
 				
 				----------------------------------------------------------------
@@ -2687,16 +3034,20 @@ local function startMainSequence()
 					obj:PivotTo(obj:GetPivot() + Vector3.new(0, groundPos.Y - bottomY + COIN_HOVER, 0))
 				end
 				
-				-- Gives the player a fresh copy of a tool (CD-1 or Crucifix)
-				local function giveTool(template, isCrucifix)
+				-- Gives the player a fresh copy of a tool (kind: nil = CD-1, "crucifix", "honeypot")
+				local function giveTool(template, kind)
 					if not template then return end
 					local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 3)
 					if backpack then
 						local tool = template:Clone()
 						tool.Parent = backpack
-						if isCrucifix then
+						if kind == "crucifix" then
 							tool.Activated:Connect(function()
 								onCrucifixActivated(tool)
+							end)
+						elseif kind == "honeypot" then
+							tool.Activated:Connect(function()
+								throwHoneypot(tool)
 							end)
 						end
 					end
@@ -2786,7 +3137,7 @@ local function startMainSequence()
 					return true
 				end
 				
-				-- COIN / CD / CRUCIFIX / TV / DRAWER SPAWNER
+				-- COIN / HONEYPOT / CD / CRUCIFIX / TV / DRAWER SPAWNER
 				local function spawnDoorsCompatibleCoin()
 					task.spawn(function()
 						local character = player.Character or player.CharacterAdded:Wait()
@@ -2810,9 +3161,12 @@ local function startMainSequence()
 							end
 						end
 						
-						-- What is this spawn? "coin", "cd" or "crucifix"
+						-- What is this spawn? "coin", "honeypot", "cd" or "crucifix"
 						local kind = "coin"
-						if crucifixSpawnCount < CRUCIFIX_MAX_SPAWNS and crucifixToolTemplate ~= nil and math.random() < CRUCIFIX_CHANCE then
+						if honeyToolTemplate ~= nil and math.random() < HONEYPOT_CHANCE then
+							kind = "honeypot"
+							print("[R4NS0M] A honeypot spawned at " .. tostring(groundPos))
+						elseif crucifixSpawnCount < CRUCIFIX_MAX_SPAWNS and crucifixToolTemplate ~= nil and math.random() < CRUCIFIX_CHANCE then
 							crucifixSpawnCount += 1
 							kind = "crucifix"
 							print("[R4NS0M] A crucifix spawned at " .. tostring(groundPos))
@@ -2823,7 +3177,11 @@ local function startMainSequence()
 						end
 						
 						local coinObj
-						if kind == "crucifix" then
+						if kind == "honeypot" then
+							coinObj = makeToolDisplay(honeyToolTemplate)
+							placeModelOnGround(coinObj, groundPos)
+							coinObj.Parent = Workspace
+						elseif kind == "crucifix" then
 							coinObj = makeToolDisplay(crucifixToolTemplate)
 							placeModelOnGround(coinObj, groundPos)
 							coinObj.Parent = Workspace
@@ -2866,6 +3224,8 @@ local function startMainSequence()
 							promptText = "Pick Up " .. CD_TOOL_NAME
 						elseif kind == "crucifix" then
 							promptText = "Pick Up " .. CRUCIFIX_TOOL_NAME
+						elseif kind == "honeypot" then
+							promptText = "Pick Up " .. HONEYPOT_TOOL_NAME
 						end
 						
 						local pickPrompt = addPickupPrompt(coinObj, promptText)
@@ -2887,10 +3247,13 @@ local function startMainSequence()
 							
 							-- TOOL PICKUPS: go to your inventory, don't change the coin counter
 							if kind == "cd" then
-								giveTool(cdToolTemplate, false)
+								giveTool(cdToolTemplate, nil)
 								return
 							elseif kind == "crucifix" then
-								giveTool(crucifixToolTemplate, true)
+								giveTool(crucifixToolTemplate, "crucifix")
+								return
+							elseif kind == "honeypot" then
+								giveTool(honeyToolTemplate, "honeypot")
 								return
 							end
 							
@@ -2958,5 +3321,60 @@ task.spawn(function()
 		end
 	end)
 	
+	-- true = the main sequence already started, so this controller stops
 	local function aborted()
-		if mainSequenceTriggere
+		if mainSequenceTriggered then
+			if waitConn then
+				waitConn:Disconnect()
+				waitConn = nil
+			end
+			return true
+		end
+		return false
+	end
+	
+	-- 1) image in the top-left corner
+	task.wait(PRE_CORNER_TIME)
+	if aborted() then return end
+	cornerImage.Visible = false
+	
+	-- 2) flash image in the center on the bg image
+	preBg.ImageTransparency = 0
+	preBg.Visible = true
+	flashImage.Visible = true
+	detecting = PRE_DETECT_IN_FLASH
+	task.wait(PRE_FLASH_TIME)
+	if aborted() then return end
+	flashImage.Visible = false
+	preBg.Visible = false
+	detecting = false
+	
+	-- 3) nothing for a moment
+	task.wait(PRE_GAP_TIME)
+	if aborted() then return end
+	
+	-- 4) the first image comes back to the center, the bg image flickers (half transparent)
+	stareImage.Visible = true
+	preBg.ImageTransparency = 0.5
+	preBg.Visible = true
+	detecting = true
+	
+	local t0 = os.clock()
+	while os.clock() - t0 < PRE_STARE_TIME do
+		if aborted() then return end
+		preBg.ImageTransparency = 0.35 + math.random() * 0.4
+		task.wait(PRE_FLICKER_SPEED)
+	end
+	if aborted() then return end
+	
+	-- you stood still: the warning is over, nothing happens
+	detecting = false
+	if waitConn then
+		waitConn:Disconnect()
+		waitConn = nil
+	end
+	if preGui then
+		preGui:Destroy()
+	end
+	releaseSpawnSound() -- the images are gone, the sound still plays until it ends
+end)
